@@ -1,0 +1,22 @@
+import type { Metadata } from "next";
+import { Inter } from "next/font/google";
+import CartProvider from "@/components/cart-context";
+import "./globals.css";
+
+const inter = Inter({ subsets: ["latin"] });
+
+export const metadata: Metadata = {
+  title: "AgentStore — Agentic Commerce Demo",
+  description:
+    "An AI-agent-friendly e-commerce demo. Browse products, add to cart and check out with Razorpay test payments — hands-free via the WebMCP agent tools.",
+};
+
+export default function RootLayout({ children }: { children: React.ReactNode }) {
+  return (
+    <html lang="en">
+      <body className={`${inter.className} bg-zinc-950 text-zinc-100 antialiased`}>
+        <CartProvider>{children}</CartProvider>
+      </body>
+    </html>
+  );
+}
