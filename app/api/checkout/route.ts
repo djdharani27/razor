@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import Razorpay from "razorpay";
-import type { PaymentLinks } from "razorpay/dist/types/paymentLink";
+import type { Orders } from "razorpay/dist/types/orders";
 import { getAllProducts, insertOrder } from "@/lib/db";
 import type { CartItem } from "@/lib/types";
 
@@ -19,8 +19,8 @@ interface CheckoutItem {
  *
  * Validates stock and computes the total server-side (client prices are never
  * trusted). Rejects orders above SPEND_CAP_PAISE with a structured JSON error,
- * creates a Razorpay Payment Link, records the order as "created" and returns
- * { orderId, paymentLinkUrl }.
+ * creates a Razorpay order for Standard Checkout and records the order as
+ * "created". Returns { orderId, razorpayOrderId, amount, currency, keyId }.
  */
 export async function POST(req: Request) {
   let body: { items?: CheckoutItem[] };
@@ -88,6 +88,9 @@ export async function POST(req: Request) {
 
   // Spend-cap guard: graceful, structured rejection, not a crash.
   if (totalPaise > SPEND_CAP_PAISE) {
+    console.warn(
+      `[checkout] rejected: order ₹${(totalPaise / 100).toFixed(2)} exceeds spend cap ₹${(SPEND_CAP_PAISE / 100).toFixed(2)}`
+    );
     return NextResponse.json(
       {
         error: `Order total ₹${(totalPaise / 100).toFixed(2)} exceeds the spend cap of ₹${(SPEND_CAP_PAISE / 100).toFixed(2)} (SPEND_CAP_PAISE). Remove some items or split the order.`,
@@ -113,39 +116,57 @@ export async function POST(req: Request) {
     key_secret: process.env.RAZORPAY_KEY_SECRET,
   });
 
-  const origin =
-    process.env.NEXT_PUBLIC_BASE_URL ??
-    (process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : undefined) ??
-    "http://localhost:3000";
-
-  let link;
+  let order;
   try {
-    const createParams: PaymentLinks.RazorpayPaymentLinkCreateRequestBody = {
+    const createParams: Orders.RazorpayOrderCreateRequestBody = {
       amount: totalPaise,
       currency: "INR",
-      description: `AgentStore order (${items.length} item${items.length === 1 ? "" : "s"})`,
-      customer: { name: "AgentStore Customer", email: "customer@agentstore.demo" },
-      notify: { sms: false, email: false },
-      callback_url: origin + "/order/__ORDER_ID__",
-      callback_method: "get",
-      reference_id: `order-${Date.now()}`,
+      receipt: `order-${Date.now()}`,
+      notes: {
+        items: JSON.stringify(items),
+      },
     };
-    link = await razorpay.paymentLink.create(createParams);
+    order = await razorpay.orders.create(createParams);
   } catch (err) {
-    const message = err instanceof Error ? err.message : "Unknown Razorpay error";
+    // Razorpay SDK errors carry statusCode + { error: { description, code } }.
+    // Surface those so the real cause isn't swallowed as "Unknown error".
+    const e = err as {
+      statusCode?: number;
+      error?: { description?: string; code?: string };
+      message?: string;
+    };
+    const detail = e.error?.description ?? e.message ?? "Unknown Razorpay error";
+    console.error(
+      `[checkout] order creation failed for ₹${(totalPaise / 100).toFixed(2)}`,
+      { statusCode: e.statusCode ?? null, code: e.error?.code ?? null, detail }
+    );
     return NextResponse.json(
-      { error: `Failed to create payment link: ${message}` },
+      {
+        error: `Failed to create order: ${detail}`,
+        code: "CHECKOUT_REJECTED",
+        ...(e.statusCode ? { statusCode: e.statusCode } : {}),
+        ...(e.error?.code ? { razorpayCode: e.error.code } : {}),
+      },
       { status: 502 }
     );
   }
 
-  // Insert the order as "created" (status flips to "paid" via webhook).
+  // Record the order as "created". The Razorpay order id is stored in
+  // razorpay_payment_link_id (the column is just an opaque reference string);
+  // it's how payment status is reconciled, whether via the in-page checkout
+  // handler or the payment_link.paid webhook.
   const orderId = insertOrder({
-    razorpay_payment_link_id: link.id,
+    razorpay_payment_link_id: order.id,
     status: "created",
     amount_paise: totalPaise,
     items,
   });
 
-  return NextResponse.json({ orderId, paymentLinkUrl: link.short_url });
+  return NextResponse.json({
+    orderId,
+    razorpayOrderId: order.id,
+    amount: order.amount,
+    currency: order.currency,
+    keyId: process.env.RAZORPAY_KEY_ID,
+  });
 }

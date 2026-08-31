@@ -107,16 +107,18 @@ export function insertOrder(order: {
   return Number(info.lastInsertRowid);
 }
 
-export function markOrderPaid(paymentLinkId: string): void {
-  initDb()
+export function markOrderPaid(paymentLinkId: string): number {
+  const info = initDb()
     .prepare("UPDATE orders SET status = 'paid' WHERE razorpay_payment_link_id = ?")
     .run(paymentLinkId);
+  return info.changes;
 }
 
-export function markOrderFailed(paymentLinkId: string): void {
-  initDb()
+export function markOrderFailed(paymentLinkId: string): number {
+  const info = initDb()
     .prepare("UPDATE orders SET status = 'failed' WHERE razorpay_payment_link_id = ?")
     .run(paymentLinkId);
+  return info.changes;
 }
 
 export function getRecentAgentLog(limit = 20): AgentLogRow[] {

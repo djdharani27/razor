@@ -9,8 +9,12 @@ const SUCCESS = { ok: true };
 /**
  * POST /api/webhook/razorpay
  * Verifies the Razorpay signature (HMAC-SHA256 over the raw body) using
- * RAZORPAY_WEBHOOK_SECRET, then reconciles order status from payment_link events.
- * Returns 200 quickly — the payment link UI polls /api/orders/:id for status.
+ * RAZORPAY_WEBHOOK_SECRET, then reconciles order status. Handles both Standard
+ * Checkout events (order.paid / order.failed) and Payment Link events
+ * (payment_link.paid / cancelled / expired / failed). The entity id (order id
+ * or payment link id) is the same string stored on the local order, so the
+ * same markOrderPaid/markOrderFailed lookups work for both.
+ * Returns 200 quickly — the order page polls /api/orders/:id for status.
  */
 export async function POST(req: Request) {
   const rawBody = await req.text();
@@ -35,28 +39,39 @@ export async function POST(req: Request) {
   }
 
   const eventName = event.event as string;
-  const paymentLinkId = event.payload?.payment_link?.entity?.id as string | undefined;
-  const amountPaise = event.payload?.payment_link?.entity?.amount as number | undefined;
 
-  if (paymentLinkId) {
-    if (eventName === "payment_link.paid") {
-      markOrderPaid(paymentLinkId);
+  // Standard Checkout events carry the order entity; Payment Link events carry
+  // the payment_link entity. Both expose the id we store on the local order.
+  const entity = event.payload?.order?.entity ?? event.payload?.payment_link?.entity;
+  const entityId = entity?.id as string | undefined;
+  const amountPaise = entity?.amount as number | undefined;
+
+  if (entityId) {
+    if (eventName === "payment_link.paid" || eventName === "order.paid") {
+      const n = markOrderPaid(entityId);
       console.log(
-        `[webhook] payment_link.paid for ${paymentLinkId}`,
-        amountPaise !== undefined ? `amount=${amountPaise}` : ""
+        `[webhook] ${eventName} for ${entityId}`,
+        `amount=${amountPaise ?? "?"}`,
+        n > 0 ? `(order updated)` : `(NO matching order for ${eventName}!)`
       );
     } else if (
       eventName === "payment_link.cancelled" ||
       eventName === "payment_link.expired" ||
-      eventName === "payment_link.failed"
+      eventName === "payment_link.failed" ||
+      eventName === "order.failed" ||
+      eventName === "order.cancelled" ||
+      eventName === "order.expired"
     ) {
-      markOrderFailed(paymentLinkId);
-      console.log(`[webhook] ${eventName} for ${paymentLinkId}`);
+      const n = markOrderFailed(entityId);
+      console.log(
+        `[webhook] ${eventName} for ${entityId}`,
+        n > 0 ? `(order updated)` : `(NO matching order for ${eventName}!)`
+      );
     } else {
-      console.log(`[webhook] unhandled event ${eventName} for ${paymentLinkId}`);
+      console.log(`[webhook] unhandled event ${eventName} for ${entityId}`);
     }
   } else {
-    console.log(`[webhook] no payment_link entity for event ${eventName}`);
+    console.log(`[webhook] no order/payment_link entity for event ${eventName}`);
   }
 
   // Always acknowledge quickly; the UI reads status from the orders table.
