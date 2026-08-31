@@ -170,7 +170,14 @@ export default function WebMCPTools() {
               };
             }
             add(productId, qty);
-            return { cart: cartRef.current, totalQty: cartRef.current.reduce((s, i) => s + i.qty, 0) };
+            // cartRef.current is still the pre-update cart (setState is async
+            // until the next render), so compute the resulting cart here.
+            const nextCart = cartRef.current.some((i) => i.productId === productId)
+              ? cartRef.current.map((i) =>
+                  i.productId === productId ? { ...i, qty: i.qty + qty } : i
+                )
+              : [...cartRef.current, { productId, qty }];
+            return { cart: nextCart, totalQty: nextCart.reduce((s, i) => s + i.qty, 0) };
           }),
       },
       {
@@ -217,9 +224,10 @@ export default function WebMCPTools() {
             const existed = cartRef.current.some((i) => i.productId === productId);
             if (!existed) return { error: `Product ${input.id} is not in the cart.` };
             remove(productId);
+            const nextCart = cartRef.current.filter((i) => i.productId !== productId);
             return {
-              cart: cartRef.current,
-              totalQty: cartRef.current.reduce((s, i) => s + i.qty, 0),
+              cart: nextCart,
+              totalQty: nextCart.reduce((s, i) => s + i.qty, 0),
             };
           }),
       },
@@ -244,7 +252,7 @@ export default function WebMCPTools() {
             });
             const data = (await res.json()) as {
               orderId?: number;
-              paymentLinkUrl?: string;
+              razorpayOrderId?: string;
               error?: string;
               code?: string;
             };
@@ -258,16 +266,13 @@ export default function WebMCPTools() {
               };
             }
 
-            // Hand the actual payment step to the human in a new tab.
-            if (data.paymentLinkUrl) {
-              window.open(data.paymentLinkUrl, "_blank", "noopener,noreferrer");
-            }
+            // Payment happens via the Razorpay Standard Checkout modal on the
+            // order page — direct the user there to complete it.
             clear();
             return {
               ok: true,
-              message: `Order ${data.orderId} created. The payment link was opened in a new tab — the user must complete the Razorpay payment there.`,
+              message: `Order ${data.orderId} created. Tell the user to open /order/${data.orderId} and click "Pay" to complete the payment in the Razorpay checkout popup.`,
               orderId: data.orderId,
-              paymentLinkUrl: data.paymentLinkUrl,
             };
           }),
       },
@@ -312,10 +317,20 @@ export default function WebMCPTools() {
     const registered = new Set<string>();
     const registerAll = async () => {
       for (const tool of tools) {
+        if (controller.signal.aborted) return;
         try {
           await modelContext.registerTool(tool);
           registered.add(tool.id);
         } catch (err) {
+          // The browser rejects duplicate names when the same tools are already
+          // registered (e.g. StrictMode double-mount in dev). Duplicates are
+          // harmless — the existing registration is the one that's live — so
+          // treat them as a no-op instead of a failure.
+          const name = err instanceof Error ? err.name : "";
+          if (name === "InvalidStateError" && String(err).includes("Duplicate")) {
+            registered.add(tool.id);
+            continue;
+          }
           console.warn(`[AgentStore] failed to register WebMCP tool "${tool.id}"`, err);
         }
       }
@@ -324,7 +339,9 @@ export default function WebMCPTools() {
 
     return () => {
       controller.abort();
-      // Unregister only the tools this component registered.
+      // Unregister only the tools this component registered. In-flight
+      // registrations are skipped via the aborted signal above, so the first
+      // mount's cleanup can't tear down tools the second mount relies on.
       for (const id of registered) {
         void modelContext.unregisterTool(id).catch(() => undefined);
       }
