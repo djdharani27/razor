@@ -98,6 +98,24 @@ export default function WebMCPTools() {
           }),
       },
       {
+        id: "get_all_products",
+        name: "get_all_products",
+        description: "List the full product catalog with id, name, price and stock",
+        inputSchema: { type: "object", properties: {} },
+        execute: (input) =>
+          runTool("get_all_products", input, async () => {
+            const all = await findProducts("");
+            return all.map((p) => ({
+              id: p.id,
+              name: p.name,
+              pricePaise: p.price_paise,
+              priceInr: `₹${(p.price_paise / 100).toFixed(2)}`,
+              stock: p.stock,
+              description: p.description,
+            }));
+          }),
+      },
+      {
         id: "get_product",
         name: "get_product",
         description: "Get full details for a single product by id",

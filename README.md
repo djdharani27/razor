@@ -55,11 +55,12 @@ The products table auto-seeds on first server start too — the explicit `npm ru
 
 ## WebMCP Tools
 
-AgentStore registers 7 tools with the browser via `document.modelContext.registerTool()`:
+AgentStore registers 8 tools with the browser via `document.modelContext.registerTool()`:
 
 | Tool | Purpose |
 | --- | --- |
 | `search_products` | Search the catalog by name/description keyword |
+| `get_all_products` | List the full product catalog |
 | `get_product` | Full details for one product |
 | `add_to_cart` | Add to cart (stock-validated) |
 | `view_cart` | Current cart contents + running total |
