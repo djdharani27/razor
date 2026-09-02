@@ -30,3 +30,6 @@ next-env.d.ts
 *.db-journal
 *.db-wal
 *.db-shm
+
+# UPI Reserve Pay SBMD sandbox — server-side step session
+.rzpdata-sbmd/

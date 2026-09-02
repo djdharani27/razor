@@ -99,6 +99,18 @@ Checkout creates a Razorpay **Payment Link** server-side and returns `{ orderId,
 
 **Test card:** `4111 1111 1111 1111` — any future expiry, any CVV. This completes a successful test payment.
 
+## UPI Reserve Pay (SBMD) Sandbox — `/upi-sbmd`
+
+The repo also bundles the **UPI Reserve Pay / Single-Block-Multiple-Debit** step-runner at [http://localhost:3000/upi-sbmd](http://localhost:3000/upi-sbmd). It is a self-contained sandbox that walks through the whole SBMD API flow against Razorpay test mode:
+
+1. **1.1 → 1.3** register the mandate (create customer → authorisation order → checkout.js mandate approval).
+2. **2.1** fetches the authorisation payment to get its `token_id`.
+3. **3.1 → 3.2** create a charge order and initiate the one-time recurring payment against the blocked amount.
+
+It reuses the same server-side `RAZORPAY_KEY_ID` / `RAZORPAY_KEY_SECRET` as AgentStore (no extra env needed). Steps run standalone at any stage and auto-wire the ids they need from earlier step outputs (`customer_id`, `order_id`, `token_id`, email/contact). Its server-side step session persists under `.rzpdata-sbmd/` (gitignored).
+
+Namespaced SBMD code lives under `lib/upi-sbmd/`, `components/upi-sbmd/`, `app/upi-sbmd/` and its API routes are `/api/rzp-sbmd`, `/api/sbmd-env`, `/api/sbmd-session` — none collide with the AgentStore routes above.
+
 ### Testing the Webhook Locally
 
 Razorpay can't reach `localhost`, so expose the app with a tunnel:

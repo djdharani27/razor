@@ -70,6 +70,12 @@ export default function Storefront({ products }: { products: Product[] }) {
           </p>
         </div>
         <div className="flex items-center gap-3">
+          <a
+            href="/upi-sbmd"
+            className="rounded-lg border border-zinc-700 px-4 py-2 text-sm font-medium text-zinc-200 transition hover:border-zinc-500 hover:text-white"
+          >
+            UPI Reserve Pay SBMD sandbox
+          </a>
           <span className="rounded-full border border-emerald-900 bg-emerald-950/50 px-3 py-1 text-xs font-medium text-emerald-300">
             ● WebMCP tools registered
           </span>
