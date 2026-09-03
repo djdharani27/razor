@@ -71,6 +71,12 @@ export default function Storefront({ products }: { products: Product[] }) {
         </div>
         <div className="flex items-center gap-3">
           <a
+            href="/agent"
+            className="rounded-lg bg-indigo-600 px-4 py-2 text-sm font-semibold text-white transition hover:bg-indigo-500"
+          >
+            💬 Chat with Agent
+          </a>
+          <a
             href="/upi-sbmd"
             className="rounded-lg border border-zinc-700 px-4 py-2 text-sm font-medium text-zinc-200 transition hover:border-zinc-500 hover:text-white"
           >

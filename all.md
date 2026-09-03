@@ -100,12 +100,10 @@ Schema and seed are created lazily in `lib/db.ts` via `initDb()`. WAL journal mo
 
 | # | Name | Price | Stock |
 |---|---|---|---|
-| 1 | Wireless Bluetooth Earbuds | ₹1,999 | 25 |
-| 2 | Smart Fitness Band | ₹2,499 | 18 |
-| 3 | Mechanical Keyboard (RGB) | ₹4,999 | 12 |
-| 4 | Portable SSD 1TB | ₹8,999 | 9 |
-| 5 | 4K Action Camera | ₹14,999 | 6 |
-| 6 | Ergonomic Office Chair | ₹11,999 | 4 |
+| 1 | Sticker Pack (10) | ₹49 | 50 |
+| 2 | Phone Stand | ₹89 | 40 |
+| 3 | Wireless Mouse | ₹299 | 25 |
+| 4 | Bluetooth Speaker | ₹499 | 15 |
 
 Each product has a `picsum.photos` image URL seeded with a timestamp-based seed for uniqueness.
 
@@ -210,7 +208,7 @@ Key functions:
 | Function | Purpose |
 |---|---|
 | `initDb()` | Creates schema + seeds if products table empty. Called lazily. |
-| `seedProducts(db)` | Inserts 6 sample products in a transaction. |
+| `seedProducts(db)` | Inserts 4 sample products in a transaction. |
 | `getAllProducts()` | `SELECT * FROM products ORDER BY id ASC` |
 | `findProducts(query)` | Filters products by name/description (in-memory after fetch). |
 | `getProductById(id)` | `SELECT * FROM products WHERE id = ?` |

@@ -45,7 +45,7 @@ export function initDb(): Database.Database {
   return db;
 }
 
-/** Seed six sample products into the products table. */
+/** Seed four sample products into the products table. */
 export function seedProducts(db: Database.Database = getDb()): void {
   const insert = db.prepare(
     `INSERT INTO products (name, description, price_paise, stock, image_url)
@@ -53,12 +53,10 @@ export function seedProducts(db: Database.Database = getDb()): void {
   );
   const now = Date.now();
   const seed = [
-    { name: "Wireless Bluetooth Earbuds", description: "Noise-cancelling earbuds with 24h battery life and fast charging.", price_paise: 199900, stock: 25, image_url: `https://picsum.photos/seed/${now}-earbuds/600/400` },
-    { name: "Smart Fitness Band", description: "Heart-rate tracking, step counter, sleep monitoring and 10-day battery.", price_paise: 249900, stock: 18, image_url: `https://picsum.photos/seed/${now}-band/600/400` },
-    { name: "Mechanical Keyboard (RGB)", description: "Hot-swappable switches, aluminium frame and per-key RGB lighting.", price_paise: 499900, stock: 12, image_url: `https://picsum.photos/seed/${now}-keyboard/600/400` },
-    { name: "Portable SSD 1TB", description: "Pocket-sized USB-C SSD with 1050MB/s read speeds.", price_paise: 899900, stock: 9, image_url: `https://picsum.photos/seed/${now}-ssd/600/400` },
-    { name: "4K Action Camera", description: "Waterproof 4K camera with image stabilisation and voice control.", price_paise: 1499900, stock: 6, image_url: `https://picsum.photos/seed/${now}-camera/600/400` },
-    { name: "Ergonomic Office Chair", description: "Mesh-backed chair with lumbar support and adjustable armrests.", price_paise: 1199900, stock: 4, image_url: `https://picsum.photos/seed/${now}-chair/600/400` },
+    { name: "Sticker Pack (10)", description: "10 glossy die-cut stickers with vibrant prints.", price_paise: 4900, stock: 50, image_url: `https://picsum.photos/seed/${now}-stickers/600/400` },
+    { name: "Phone Stand", description: "Foldable aluminium phone stand with anti-slip grip.", price_paise: 8900, stock: 40, image_url: `https://picsum.photos/seed/${now}-stand/600/400` },
+    { name: "Wireless Mouse", description: "Silent-click wireless mouse with ergonomic design.", price_paise: 29900, stock: 25, image_url: `https://picsum.photos/seed/${now}-mouse/600/400` },
+    { name: "Bluetooth Speaker", description: "Portable speaker with 12h battery and deep bass.", price_paise: 49900, stock: 15, image_url: `https://picsum.photos/seed/${now}-speaker/600/400` },
   ];
   const tx = db.transaction((rows: typeof seed) => {
     for (const row of rows) insert.run(row);

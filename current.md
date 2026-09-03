@@ -33,22 +33,20 @@ page.
 
 | Table | Columns | Notes |
 | --- | --- | --- |
-| `products` | `id`, `name`, `description`, `price_paise`, `stock`, `image_url` | 6 seeded rows |
+| `products` | `id`, `name`, `description`, `price_paise`, `stock`, `image_url` | 4 seeded rows |
 | `orders` | `id`, `razorpay_payment_link_id`, `status`, `amount_paise`, `items_json`, `created_at` | `status`: `created` / `paid` / `failed` |
 | `agent_log` | `id`, `tool_name`, `arguments_json`, `result_json`, `timestamp` | one row per WebMCP tool call |
 
-The DB file is created lazily in `lib/db.ts`; the schema is created and the 6
+The DB file is created lazily in `lib/db.ts`; the schema is created and the 4
 sample products auto-seeded on first server start. `npm run seed` re-runs the
 seed idempotently.
 
 ## Seeded Products
 
-1. Wireless Bluetooth Earbuds — ₹1,999
-2. Smart Fitness Band — ₹2,499
-3. Mechanical Keyboard (RGB) — ₹4,999
-4. Portable SSD 1TB — ₹8,999
-5. 4K Action Camera — ₹14,999
-6. Ergonomic Office Chair — ₹11,999
+1. Sticker Pack (10) — ₹49
+2. Phone Stand — ₹89
+3. Wireless Mouse — ₹299
+4. Bluetooth Speaker — ₹499
 
 (Each with a stock count and a `picsum.photos` image URL.)
 

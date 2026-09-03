@@ -31,7 +31,7 @@ cp .env.example .env.local
 #    then fill in RAZORPAY_KEY_ID / RAZORPAY_KEY_SECRET (test-mode keys)
 #    and RAZORPAY_WEBHOOK_SECRET (any random string is fine for local testing)
 
-# 3. Seed the database (creates data/agentstore.db and 6 sample products)
+# 3. Seed the database (creates data/agentstore.db and 4 sample products)
 npm run seed
 
 # 4. Run the dev server
