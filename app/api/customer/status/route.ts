@@ -55,7 +55,7 @@ export async function POST(req: Request) {
   let remainingPaise: number | null = null;
 
   if (local && mandateHasRoom(local, amountPaise)) {
-    const live = await fetchCustomerTokens(customer.rzp_customer_id);
+    const live = await fetchCustomerTokens(customer.rzp_customer_id, "/api/customer/status");
     if (live.ok) {
       const remote = live.tokens.find((t) => t.tokenId === local.token_id);
       if (remote && remote.status !== "confirmed") {
@@ -82,6 +82,7 @@ export async function POST(req: Request) {
 
   logServer("customer/status", `Status for contact ${contact}`, {
     detail: { reusable, block_paise: blockPaise, remaining_paise: remainingPaise, for_amount_paise: amountPaise },
+    endpoint: "/api/customer/status",
   });
 
   return NextResponse.json({

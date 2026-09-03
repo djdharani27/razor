@@ -57,14 +57,43 @@ function safeStringify(value: unknown): string {
   return redacted.length > 4000 ? `${redacted.slice(0, 4000)}…(truncated)` : redacted;
 }
 
+// Which HTTP route / agent tool triggered this log line (e.g. "/api/checkout",
+// "pay_cart_now"). Shared helpers in lib/rzp.ts and lib/payments.ts are called
+// from several endpoints, so the caller passes its own route here — otherwise
+// server logs are impossible to attribute.
+type EndpointId = string;
+
+export interface ServerLogOptions {
+  level?: ServerLogLevel;
+  detail?: unknown;
+  /** API route or agent tool the call came from, e.g. "/api/checkout". */
+  endpoint?: EndpointId;
+  /**
+   * UPI Reserve Pay flow step this call belongs to (see README / lib/upi-sbmd):
+   *   1.1 create customer · 1.2 authorisation order · 1.3 checkout approval
+   *   2.1 fetch auth payment → token · 3.1 charge order · 3.2 recurring debit
+   */
+  step?: string;
+  /** Razorpay API endpoint this step hits, e.g. "/v1/orders". */
+  rzpEndpoint?: string;
+}
+
 export function logServer(
   stage: string,
   message: string,
-  opts: { level?: ServerLogLevel; detail?: unknown } = {}
+  opts: ServerLogOptions = {}
 ): void {
   const level = opts.level ?? "info";
   const ts = new Date().toISOString();
-  const entry: Record<string, unknown> = { ts, level, stage, message };
+  const entry: Record<string, unknown> = {
+    ts,
+    level,
+    stage,
+    message,
+    ...(opts.step ? { step: opts.step } : {}),
+    ...(opts.rzpEndpoint ? { rzp_endpoint: opts.rzpEndpoint } : {}),
+    ...(opts.endpoint ? { endpoint: opts.endpoint } : {}),
+  };
   if (opts.detail !== undefined) {
     try {
       entry.detail = JSON.parse(safeStringify(opts.detail));
@@ -73,13 +102,24 @@ export function logServer(
     }
   }
   const fileLine = JSON.stringify(entry);
-  const consoleLine = `[server-log:${stage}] ${level.toUpperCase()} ${message}`;
+  // Build a clean tag. Stages are short words ("rzp", "checkout"); endpoints
+  // are either an agent tool ("pay_cart_now") or a full route such as
+  // "/api/checkout". A bare-word endpoint joins as "rzp/pay_cart_now", while a
+  // route endpoint already carries its path, so it stands alone.
+  const endp = opts.endpoint ?? "";
+  let tag = stage;
+  if (endp) {
+    tag = endp.startsWith("/") ? endp.slice(1) : `${stage}/${endp}`;
+  }
+  const stepTag = opts.step ? ` step=${opts.step}` : "";
+  const rzpTag = opts.rzpEndpoint ? ` → ${opts.rzpEndpoint}` : "";
+  const consoleLine = `[server-log:${tag}]${stepTag}${rzpTag} ${level.toUpperCase()} ${message}`;
   const logFn = level === "error" ? console.error : level === "warn" ? console.warn : console.log;
   logFn(consoleLine);
   if (entry.detail !== undefined) {
     try {
       const compact = JSON.stringify(entry.detail);
-      logFn(`[server-log:${stage}] ${compact.length > 2000 ? `${compact.slice(0, 2000)}…` : compact}`);
+      logFn(`[server-log:${tag}]${stepTag}${rzpTag} ${compact.length > 2000 ? `${compact.slice(0, 2000)}…` : compact}`);
     } catch {
       // detail already stringified above — ignore
     }

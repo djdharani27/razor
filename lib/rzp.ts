@@ -97,26 +97,36 @@ export interface RzpCustomerResult {
  * the customer with fail_existing: "0" so an existing Razorpay record for the
  * same contact is returned rather than duplicated.
  */
+/** Step 1.1 — resolve/create the Razorpay customer (POST /v1/customers). */
 export async function ensureRzpCustomer(input: {
   name: string;
   contact: string;
   email?: string | null;
   existingRzpCustomerId?: string | null;
+  /** Route/tool this call came from, e.g. "/api/checkout" or "remember_customer". */
+  endpoint?: string;
 }): Promise<RzpCustomerResult> {
   const rzp = getRzpClient();
   const { name, contact, email } = input;
+  const logOpts = {
+    endpoint: input.endpoint,
+    step: "1.1",
+    rzpEndpoint: "/v1/customers",
+  };
 
   if (input.existingRzpCustomerId) {
     try {
       const existing = await rzp.customers.fetch(input.existingRzpCustomerId);
       logServer("rzp", `Customer ${existing.id} validated (existing)`, {
         detail: { contact, rzp_customer_id: existing.id },
+        ...logOpts,
       });
       return { ok: true, rzpCustomerId: existing.id };
     } catch {
       logServer("rzp", `Stored customer ${input.existingRzpCustomerId} no longer exists — recreating`, {
         level: "warn",
         detail: { contact },
+        ...logOpts,
       });
     }
   }
@@ -134,6 +144,7 @@ export async function ensureRzpCustomer(input: {
     const customer = await rzp.customers.create(params);
     logServer("rzp", `Customer resolved → ${customer.id}`, {
       detail: { contact, rzp_customer_id: customer.id, created: customer.created_at },
+      ...logOpts,
     });
     return { ok: true, rzpCustomerId: customer.id };
   } catch (e) {
@@ -156,23 +167,27 @@ export async function ensureRzpCustomer(input: {
           logServer("rzp", `Customer already existed — reused ${match.id}`, {
             level: "warn",
             detail: { contact, rzp_customer_id: match.id },
+            ...logOpts,
           });
           return { ok: true, rzpCustomerId: match.id };
         }
         logServer("rzp", "Customer already-exists error but no matching contact found in list", {
           level: "warn",
           detail: { contact, error: msg },
+          ...logOpts,
         });
       } catch (fetchErr) {
         logServer("rzp", "Customer reuse lookup also FAILED", {
           level: "error",
           detail: { contact, error: errorMessage(fetchErr) },
+          ...logOpts,
         });
       }
     }
     logServer("rzp", "Customer creation FAILED", {
       level: "error",
       detail: { contact, error: msg },
+      ...logOpts,
     });
     return {
       ok: false,
@@ -201,16 +216,20 @@ type RawRzpToken = Tokens.RazorpayToken & {
   };
 };
 
-/**
- * Fetch the customer's saved tokens (GET /v1/customers/:id/tokens). Requires
- * the save_vpa feature to be enabled on the account, otherwise returns an
- * empty list. Only UPI Reserve Pay tokens (method "upi", recurring true) are
- * returned.
- */
+/** Step 2.x — fetch the customer's saved tokens (GET /v1/customers/:id/tokens).
+ *  Requires the save_vpa feature to be enabled on the account, otherwise
+ *  returns an empty list. Only UPI Reserve Pay tokens (method "upi", recurring
+ *  true) are returned. */
 export async function fetchCustomerTokens(
-  rzpCustomerId: string
+  rzpCustomerId: string,
+  endpoint?: string
 ): Promise<{ ok: boolean; tokens: TokenInfo[]; error?: string }> {
   const rzp = getRzpClient();
+  const logOpts = {
+    endpoint,
+    step: "2.x",
+    rzpEndpoint: `/v1/customers/${rzpCustomerId}/tokens`,
+  };
   try {
     const res = (await rzp.customers.fetchTokens(rzpCustomerId)) as {
       entity?: string;
@@ -231,12 +250,14 @@ export async function fetchCustomerTokens(
       }));
     logServer("rzp", `Fetched ${tokens.length} UPI token(s) for ${rzpCustomerId}`, {
       detail: { rzp_customer_id: rzpCustomerId, tokens: tokens.map((t) => ({ token_id: t.tokenId, status: t.status })) },
+      ...logOpts,
     });
     return { ok: true, tokens };
   } catch (e) {
     logServer("rzp", `Fetch tokens FAILED for ${rzpCustomerId}`, {
       level: "warn",
       detail: { rzp_customer_id: rzpCustomerId, error: errorMessage(e) },
+      ...logOpts,
     });
     return { ok: false, error: errorMessage(e), tokens: [] };
   }
@@ -257,9 +278,10 @@ export interface AuthOrderResult {
   razorpay_error?: unknown;
 }
 
-/** Step 1.2 — create the authorisation order that registers the mandate. */
+/** Step 1.2 — create the authorisation order that registers the mandate
+ *  (POST /v1/orders, method "upi", token.type single_block_multiple_debit). */
 export async function createAuthorisationOrder(
-  input: AuthOrderInput
+  input: AuthOrderInput & { endpoint?: string }
 ): Promise<AuthOrderResult> {
   const rzp = getRzpClient();
   const block = Math.min(blockForAmount(input.blockPaise), MAX_BLOCK_PAISE);
@@ -271,6 +293,12 @@ export async function createAuthorisationOrder(
     frequency: "as_presented",
     type: "single_block_multiple_debit",
   } as Tokens.RazorpayTokenCard;
+
+  const logOpts = {
+    endpoint: input.endpoint,
+    step: "1.2",
+    rzpEndpoint: "/v1/orders",
+  };
 
   try {
     const params: Orders.RazorpayAuthorizationCreateRequestBody = {
@@ -293,6 +321,7 @@ export async function createAuthorisationOrder(
         max_amount: block,
         expire_at: expireAt,
       },
+      ...logOpts,
     });
     return { ok: true, orderId: order.id, expireAt, blockPaise: block };
   } catch (e) {
@@ -303,6 +332,7 @@ export async function createAuthorisationOrder(
         error: errorMessage(e),
         code: (e as RzpError)?.error?.code ?? null,
       },
+      ...logOpts,
     });
     return { ok: false, error: errorMessage(e), razorpay_error: (e as RzpError)?.error ?? null };
   }
@@ -323,10 +353,18 @@ export interface ChargeOrderResult {
   razorpay_error?: unknown;
 }
 
-/** Step 3.1 — create the charge order WITHOUT the notification object, so the
- *  debit can be executed immediately (no 25-hour pre-debit hold). */
-export async function createChargeOrder(input: ChargeOrderInput): Promise<ChargeOrderResult> {
+/** Step 3.1 — create the charge order WITHOUT the notification object (POST
+ *  /v1/orders), so the step 3.2 debit can execute immediately (no 25-hour
+ *  pre-debit hold). */
+export async function createChargeOrder(
+  input: ChargeOrderInput & { endpoint?: string }
+): Promise<ChargeOrderResult> {
   const rzp = getRzpClient();
+  const logOpts = {
+    endpoint: input.endpoint,
+    step: "3.1",
+    rzpEndpoint: "/v1/orders",
+  };
   try {
     const params: Orders.RazorpayOrderCreateRequestBody = {
       amount: input.amountPaise,
@@ -337,12 +375,14 @@ export async function createChargeOrder(input: ChargeOrderInput): Promise<Charge
     const order = (await rzp.orders.create(params)) as Orders.RazorpayOrder;
     logServer("rzp", `Charge order ${order.id} created (no notification → immediate debit)`, {
       detail: { order_id: order.id, amount_paise: input.amountPaise },
+      ...logOpts,
     });
     return { ok: true, orderId: order.id, amountPaise: Number(order.amount) };
   } catch (e) {
     logServer("rzp", "Charge order creation FAILED", {
       level: "error",
       detail: { amount_paise: input.amountPaise, error: errorMessage(e) },
+      ...logOpts,
     });
     return { ok: false, error: errorMessage(e), razorpay_error: (e as RzpError)?.error ?? null };
   }
@@ -369,12 +409,20 @@ export interface DebitInput {
   contact: string;
   name?: string;
   description?: string;
+  /** Route/tool this debit came from, e.g. "/api/checkout" or "pay_cart_now". */
+  endpoint?: string;
 }
 
-/** Step 3.2 — execute the debit against a token. Treats "token already used /
- *  cancelled" style errors as token_consumed so the caller can re-authorise. */
+/** Step 3.2 — execute the debit against a token (POST /v1/payments/create/
+ *  recurring). Treats "token already used / cancelled" style errors as
+ *  token_consumed so the caller can re-authorise. */
 export async function debitToken(input: DebitInput): Promise<DebitResult> {
   const rzp = getRzpClient();
+  const logOpts = {
+    endpoint: input.endpoint,
+    step: "3.2",
+    rzpEndpoint: "/v1/payments/create/recurring",
+  };
   const description =
     input.description ??
     (input.name ? `AgentStore payment for ${input.name}` : "AgentStore payment");
@@ -403,6 +451,7 @@ export async function debitToken(input: DebitInput): Promise<DebitResult> {
         amount_paise: input.amountPaise,
         token_id: `${input.tokenId.slice(0, 8)}…`,
       },
+      ...logOpts,
     });
     return {
       ok: true,
@@ -421,6 +470,7 @@ export async function debitToken(input: DebitInput): Promise<DebitResult> {
         error: msg,
         reason: reason ?? null,
       },
+      ...logOpts,
     });
     const tokenConsumed =
       /token.*(cancel|used|invalid|expire|not found|already)/i.test(`${reason ?? ""} ${msg}`) ||
@@ -450,9 +500,18 @@ export interface FetchPaymentResult {
   razorpay_error?: unknown;
 }
 
-/** Step 2 — fetch a payment to extract the mandate token_id after checkout. */
-export async function fetchPayment(paymentId: string): Promise<FetchPaymentResult> {
+/** Step 2.1 — fetch a payment to extract the mandate token_id after checkout
+ *  (GET /v1/payments/:id). */
+export async function fetchPayment(
+  paymentId: string,
+  endpoint?: string
+): Promise<FetchPaymentResult> {
   const rzp = getRzpClient();
+  const logOpts = {
+    endpoint,
+    step: "2.1",
+    rzpEndpoint: `/v1/payments/${paymentId}`,
+  };
   try {
     const payment = (await rzp.payments.fetch(paymentId)) as Payments.RazorpayPayment & {
       token_id?: string | null;
@@ -466,6 +525,7 @@ export async function fetchPayment(paymentId: string): Promise<FetchPaymentResul
         order_id: payment.order_id ?? null,
         has_token: Boolean(payment.token_id),
       },
+      ...logOpts,
     });
     return {
       ok: true,
@@ -482,6 +542,7 @@ export async function fetchPayment(paymentId: string): Promise<FetchPaymentResul
     logServer("rzp", `Fetch payment ${paymentId} FAILED`, {
       level: "error",
       detail: { payment_id: paymentId, error: errorMessage(e) },
+      ...logOpts,
     });
     return { ok: false, error: errorMessage(e), razorpay_error: (e as RzpError)?.error ?? null };
   }

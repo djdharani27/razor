@@ -127,6 +127,7 @@ export async function POST(req: Request) {
     logServer("checkout", "Order rejected — exceeds spend cap", {
       level: "warn",
       detail: { total_paise: totalPaise, spend_cap_paise: SPEND_CAP_PAISE, items: requested },
+      endpoint: "/api/checkout",
     });
     return NextResponse.json(
       {
@@ -148,12 +149,14 @@ export async function POST(req: Request) {
       items,
       orderKind: "charge",
       description: `AgentStore order — ${items.map((i) => `${byId.get(i.productId)?.name ?? `#${i.productId}`} x${i.qty}`).join(", ")}`,
+      endpoint: "/api/checkout",
     });
 
     if (resolution.status === "needs_authorisation") {
       const { payload } = resolution;
       logServer("checkout", `Authorisation required for ₹${(totalPaise / 100).toFixed(2)}`, {
         detail: { order_id: payload.orderId, customer_id: payload.customerId, block_paise: payload.blockPaise },
+        endpoint: "/api/checkout",
       });
       return NextResponse.json({
         status: "needs_authorisation",
@@ -183,6 +186,7 @@ export async function POST(req: Request) {
         payment_id: debit.paymentId ?? null,
         amount_paise: debit.amountPaise,
       },
+      endpoint: "/api/checkout",
     });
     return NextResponse.json({
       status: "paid",
@@ -194,7 +198,11 @@ export async function POST(req: Request) {
     });
   } catch (err) {
     const message = err instanceof Error ? err.message : "Payment could not be completed.";
-    logServer("checkout", "Checkout FAILED", { level: "error", detail: { error: message } });
+    logServer("checkout", "Checkout FAILED", {
+      level: "error",
+      detail: { error: message },
+      endpoint: "/api/checkout",
+    });
     return NextResponse.json(
       { error: message, code: "CHECKOUT_REJECTED" },
       { status: 502 }

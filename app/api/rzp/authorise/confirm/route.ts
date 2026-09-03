@@ -109,13 +109,17 @@ export async function POST(req: Request) {
     const a = Buffer.from(expected);
     const b = Buffer.from(signature);
     if (a.length !== b.length || !crypto.timingSafeEqual(a, b)) {
-      logServer("authorise/confirm", "Authorisation signature mismatch", { level: "error", detail: { order_id: orderId } });
+      logServer("authorise/confirm", "Authorisation signature mismatch", {
+        level: "error",
+        detail: { order_id: orderId },
+        endpoint: "/api/rzp/authorise/confirm",
+      });
       return NextResponse.json({ error: "Invalid signature." }, { status: 400 });
     }
   }
 
-  // Fetch the payment to extract the mandate token_id (step 2 of the flow).
-  const fetched = await fetchPayment(paymentId);
+  // Fetch the payment to extract the mandate token_id (step 2.1 of the flow).
+  const fetched = await fetchPayment(paymentId, "/api/rzp/authorise/confirm");
   if (!fetched.ok || !fetched.payment) {
     return NextResponse.json(
       { error: fetched.error ?? `Could not fetch payment ${paymentId}.` },
@@ -128,6 +132,7 @@ export async function POST(req: Request) {
     logServer("authorise/confirm", `Payment ${paymentId} carried no token_id`, {
       level: "error",
       detail: { order_id: orderId, payment_status: fetched.payment.status },
+      endpoint: "/api/rzp/authorise/confirm",
     });
     return NextResponse.json(
       { error: "The authorisation payment did not return a mandate token. Please try again." },
@@ -148,6 +153,9 @@ export async function POST(req: Request) {
       payment_id: paymentId,
       had_signature: Boolean(signature),
     },
+    endpoint: "/api/rzp/authorise/confirm",
+    step: "2.1",
+    rzpEndpoint: `/v1/payments/${paymentId}`,
   });
 
   // Store the mandate. Fall back to what the checkout handoff told us for the
@@ -162,6 +170,7 @@ export async function POST(req: Request) {
     authPaymentId: paymentId,
     fallbackBlockPaise: blockPaise,
     fallbackExpireAt: expireAt,
+    endpoint: "/api/rzp/authorise/confirm",
   });
 
   // If a debit is parked on this confirmation (agent flow), execute it now.
@@ -177,6 +186,7 @@ export async function POST(req: Request) {
         amountPaise,
         receipt: pending.receipt ?? `order-${Date.now()}`,
         notes: { source: "agentstore_agent", items: items.map((i) => `${i.qty}x${i.productId}`).join(",") },
+        endpoint: "/api/rzp/authorise/confirm",
       });
       if (!charge.ok || !charge.orderId) {
         return NextResponse.json(
@@ -201,6 +211,7 @@ export async function POST(req: Request) {
         contact,
         name,
         description: pending.description,
+        endpoint: "/api/rzp/authorise/confirm",
       });
       if (debit.status === "captured") {
         if (debit.paymentId) {

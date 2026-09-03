@@ -83,6 +83,7 @@ export async function POST(req: Request) {
       payment_id: event.payload?.payment?.entity?.id ?? null,
       token_id: event.payload?.token?.entity?.id ?? event.payload?.payment?.entity?.token_id ?? null,
     },
+    endpoint: "/api/webhook/razorpay",
   });
 
   // ---- token lifecycle events (UPI Reserve Pay mandates) ----
@@ -90,13 +91,17 @@ export async function POST(req: Request) {
     const tokenId =
       event.payload?.token?.entity?.id ?? event.payload?.payment?.entity?.token_id ?? null;
     if (!tokenId) {
-      logServer("webhook", `No token_id in ${eventName} payload`, { level: "warn" });
+      logServer("webhook", `No token_id in ${eventName} payload`, {
+        level: "warn",
+        endpoint: "/api/webhook/razorpay",
+      });
       return NextResponse.json(SUCCESS);
     }
     const mandate = getMandateByTokenId(tokenId);
     if (!mandate) {
       logServer("webhook", `${eventName} for unknown token ${tokenId.slice(0, 8)}… (no local mandate)`, {
         level: "warn",
+        endpoint: "/api/webhook/razorpay",
       });
       return NextResponse.json(SUCCESS);
     }
@@ -106,9 +111,13 @@ export async function POST(req: Request) {
       logServer("webhook", `${eventName} → mandate #${mandate.id} closed locally`, {
         level: "warn",
         detail: { token_id: `${tokenId.slice(0, 8)}…`, mandate_id: mandate.id },
+        endpoint: "/api/webhook/razorpay",
       });
     } else {
-      logServer("webhook", `Unhandled token event ${eventName}`, { level: "warn" });
+      logServer("webhook", `Unhandled token event ${eventName}`, {
+        level: "warn",
+        endpoint: "/api/webhook/razorpay",
+      });
     }
     return NextResponse.json(SUCCESS);
   }
@@ -131,7 +140,10 @@ export async function POST(req: Request) {
   if (orderId) {
     const row = getOrderByRzpOrderId(orderId);
     if (!row) {
-      logServer("webhook", `${eventName} for ${orderId} — no matching local order`, { level: "warn" });
+      logServer("webhook", `${eventName} for ${orderId} — no matching local order`, {
+        level: "warn",
+        endpoint: "/api/webhook/razorpay",
+      });
       return NextResponse.json(SUCCESS);
     }
 
@@ -144,15 +156,26 @@ export async function POST(req: Request) {
       }
       logServer("webhook", `${eventName} → order #${row.id} paid`, {
         detail: { order_id: orderId, payment_id: paymentId ?? null },
+        endpoint: "/api/webhook/razorpay",
       });
     } else if (failEvents.includes(eventName)) {
       updateOrderStatus(row.id, "failed");
-      logServer("webhook", `${eventName} → order #${row.id} failed`, { level: "warn", detail: { order_id: orderId } });
+      logServer("webhook", `${eventName} → order #${row.id} failed`, {
+        level: "warn",
+        detail: { order_id: orderId },
+        endpoint: "/api/webhook/razorpay",
+      });
     } else {
-      logServer("webhook", `Unhandled event ${eventName} for order ${orderId}`, { level: "warn" });
+      logServer("webhook", `Unhandled event ${eventName} for order ${orderId}`, {
+        level: "warn",
+        endpoint: "/api/webhook/razorpay",
+      });
     }
   } else {
-    logServer("webhook", `No order/payment/token entity for event ${eventName}`, { level: "warn" });
+    logServer("webhook", `No order/payment/token entity for event ${eventName}`, {
+      level: "warn",
+      endpoint: "/api/webhook/razorpay",
+    });
   }
 
   // Always acknowledge quickly; the UI reads status from the orders table.

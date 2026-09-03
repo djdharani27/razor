@@ -234,12 +234,14 @@ export async function executeTool(
         contact,
         email,
         existingRzpCustomerId: local?.rzp_customer_id ?? null,
+        endpoint: "remember_customer",
       });
       const rzpCustomerId = rzp.ok ? rzp.rzpCustomerId ?? null : null;
 
       setCustomer(sid, { name, contact, email, rzpCustomerId });
       logServer("remember_customer", `Identity recorded for ${name}`, {
         detail: { contact, rzp_customer_id: rzpCustomerId, session: sid },
+        endpoint: "remember_customer",
       });
 
       return {
@@ -285,10 +287,16 @@ export async function executeTool(
           receipt: `Receipt No. ${getPayment(sid).receiptNo}`,
           description: `AI Agent payment — ${cartInfo.items.map((i) => i.name).join(", ")}`,
           notes: { source: "ai_agent" },
+          endpoint: "pay_cart_now",
         });
       } catch (err) {
         const message = err instanceof Error ? err.message : "Payment could not be completed.";
-        logServer("pay_cart_now", `Payment error: ${message}`, { level: "error" });
+        logServer("pay_cart_now", `Payment error: ${message}`, {
+          level: "error",
+          endpoint: "pay_cart_now",
+          step: "3.2",
+          rzpEndpoint: "/v1/payments/create/recurring",
+        });
         updatePayment(sid, { status: "failed", errorMessage: message });
         return { error: message, status: "failed" };
       }
@@ -303,6 +311,9 @@ export async function executeTool(
         });
         logServer("pay_cart_now", `Authorisation required (order ${payload.orderId})`, {
           detail: { amount_paise: amountPaise, session: sid },
+          endpoint: "pay_cart_now",
+          step: "1.2",
+          rzpEndpoint: "/v1/orders",
         });
         return {
           status: "needs_authorisation",
@@ -331,7 +342,12 @@ export async function executeTool(
       }
 
       if (resolution.status === "error") {
-        logServer("pay_cart_now", `Payment rejected: ${resolution.error}`, { level: "error" });
+        logServer("pay_cart_now", `Payment rejected: ${resolution.error}`, {
+          level: "error",
+          endpoint: "pay_cart_now",
+          step: "3.2",
+          rzpEndpoint: "/v1/payments/create/recurring",
+        });
         updatePayment(sid, { status: "failed", errorMessage: resolution.error });
         return { error: resolution.error, status: "failed", code: resolution.code };
       }
@@ -355,6 +371,9 @@ export async function executeTool(
           payment_id: debit.paymentId ?? null,
           amount_paise: amountPaise,
         },
+        endpoint: "pay_cart_now",
+        step: "3.2",
+        rzpEndpoint: "/v1/payments/create/recurring",
       });
       return {
         status: "captured",

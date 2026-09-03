@@ -77,13 +77,15 @@ async function resolveUsableMandate(opts: {
   localCustomerId: number;
   rzpCustomerId: string;
   amountPaise: number;
+  /** Route/tool this resolution came from, e.g. "/api/checkout". */
+  endpoint?: string;
 }): Promise<{ usable: MandateRow | undefined; remoteDeadToken: string | null }> {
   expireStaleMandates();
   const local = getActiveMandate(opts.localCustomerId);
   let remoteDeadToken: string | null = null;
   if (!local) return { usable: undefined, remoteDeadToken: null };
 
-  const live = await fetchCustomerTokens(opts.rzpCustomerId);
+  const live = await fetchCustomerTokens(opts.rzpCustomerId, opts.endpoint);
   if (live.ok) {
     const remote = live.tokens.find((t) => t.tokenId === local.token_id);
     if (!remote) {
@@ -93,6 +95,7 @@ async function resolveUsableMandate(opts: {
       logServer("payment", `Mandate #${local.id} gone from Razorpay — cancelled locally`, {
         level: "warn",
         detail: { token_id: `${local.token_id.slice(0, 8)}…`, customer_id: opts.localCustomerId },
+        ...(opts.endpoint ? { endpoint: opts.endpoint } : {}),
       });
       return { usable: undefined, remoteDeadToken: local.token_id };
     }
@@ -103,6 +106,7 @@ async function resolveUsableMandate(opts: {
       logServer("payment", `Mandate #${local.id} no longer confirmed (${status}) — cancelled locally`, {
         level: "warn",
         detail: { token_id: `${local.token_id.slice(0, 8)}…` },
+        ...(opts.endpoint ? { endpoint: opts.endpoint } : {}),
       });
       return { usable: undefined, remoteDeadToken: local.token_id };
     }
@@ -113,6 +117,7 @@ async function resolveUsableMandate(opts: {
         logServer("payment", `Mandate #${local.id} exhausted remotely (${remaining} paise left) — needs re-authorisation`, {
           level: "warn",
           detail: { amount_paise: opts.amountPaise, remaining_paise: remaining },
+          ...(opts.endpoint ? { endpoint: opts.endpoint } : {}),
         });
         markMandateCancelled(local.token_id, "used");
         failOpenOrdersForMandate(local.id);
@@ -139,6 +144,8 @@ export function persistMandate(input: {
   authPaymentId?: string | null;
   fallbackBlockPaise: number;
   fallbackExpireAt: number;
+  /** Route this mandate came from, e.g. "/api/rzp/authorise/confirm". */
+  endpoint?: string;
 }): { mandateId: number; blockPaise: number; expireAt: number } {
   const blockPaise = input.fallbackBlockPaise;
   const expireAt = input.fallbackExpireAt;
@@ -147,6 +154,7 @@ export function persistMandate(input: {
     logServer("payment", `Mandate ${input.tokenId.slice(0, 8)}… already stored — keeping it`, {
       level: "warn",
       detail: { mandate_id: existing.id, customer_id: input.localCustomerId },
+      ...(input.endpoint ? { endpoint: input.endpoint } : {}),
     });
     return { mandateId: existing.id, blockPaise, expireAt };
   }
@@ -166,12 +174,14 @@ export function persistMandate(input: {
       block_paise: blockPaise,
       expire_at: expireAt,
     },
+    ...(input.endpoint ? { endpoint: input.endpoint } : {}),
   });
   return { mandateId, blockPaise, expireAt };
 }
 
-/** After the mandate is confirmed, run the debit that was waiting on it.
- *  Mirrors executePayment but always with a fresh usable mandate. */
+/** After the mandate is confirmed, run the debit that was waiting on it
+ *  (steps 3.1 → 3.2). Mirrors executePayment but always with a fresh usable
+ *  mandate. */
 async function completePendingDebit(opts: {
   rzpCustomerId: string;
   localCustomerId: number;
@@ -185,11 +195,14 @@ async function completePendingDebit(opts: {
   orderKind: OrderKind;
   receipt?: string;
   description?: string;
+  /** Route/tool this debit came from, e.g. "pay_cart_now". */
+  endpoint?: string;
 }): Promise<DebitOutcome> {
   const charge = await createChargeOrder({
     amountPaise: opts.amountPaise,
     receipt: opts.receipt,
     notes: { source: "agentstore", items: opts.items.map((i) => `${i.qty}x${i.productId}`).join(",") },
+    endpoint: opts.endpoint,
   });
   if (!charge.ok || !charge.orderId) {
     throw new Error(charge.error ?? "Failed to create charge order after authorisation.");
@@ -211,6 +224,7 @@ async function completePendingDebit(opts: {
     contact: opts.contact,
     name: opts.name,
     description: opts.description,
+    endpoint: opts.endpoint,
   });
   if (debit.status === "captured" && debit.paymentId) {
     debitMandate(opts.mandateId, opts.amountPaise);
@@ -224,7 +238,7 @@ async function completePendingDebit(opts: {
 
 /** Upsert a local customer + resolve their Razorpay customer, persisting the
  *  Razorpay id back onto the local row. */
-async function ensureCustomer(input: CustomerIdentity) {
+async function ensureCustomer(input: CustomerIdentity & { endpoint?: string }) {
   const local = upsertCustomer({
     contact: input.contact,
     name: input.name,
@@ -235,6 +249,7 @@ async function ensureCustomer(input: CustomerIdentity) {
     contact: input.contact,
     email: input.email ?? null,
     existingRzpCustomerId: local.rzp_customer_id,
+    endpoint: input.endpoint,
   });
   if (!rzp.ok || !rzp.rzpCustomerId) {
     throw new Error(rzp.error ?? "Could not resolve the Razorpay customer.");
@@ -249,11 +264,14 @@ export interface ExecutePaymentOptions extends PaymentContextInput {
   /** Set when we already know the mandate (e.g. after authorisation confirm) —
    *  skips the reusable-token lookup and debits straight away. */
   knownMandateId?: number;
+  /** Route/tool this payment came from, e.g. "/api/checkout" or "pay_cart_now". */
+  endpoint?: string;
 }
 
-/**
- * Core decision + execution for a payment.
- * Returns either an authorisation handoff or a completed/failed debit.
+/** Core decision + execution for a payment. The flow steps mirror README /
+ *  lib/upi-sbmd: 1.1 resolve customer → 2.x look up a reusable mandate →
+ *  reusable (3.1 charge order + 3.2 debit) OR authorisation required
+ *  (1.2 authorisation order → 1.3 checkout approval).
  */
 export async function executePayment(input: ExecutePaymentOptions): Promise<PaymentResolution> {
   if (!isRzpConfigured()) {
@@ -272,7 +290,7 @@ export async function executePayment(input: ExecutePaymentOptions): Promise<Paym
     };
   }
 
-  const { rzpCustomerId } = await ensureCustomer(input);
+  const { rzpCustomerId } = await ensureCustomer({ ...input, endpoint: input.endpoint });
   const localCustomerId = getCustomerByContact(input.contact)?.id ?? 0;
 
   // Fast path: a known mandate (post-authorisation) — debit it.
@@ -286,6 +304,7 @@ export async function executePayment(input: ExecutePaymentOptions): Promise<Paym
           localCustomerId,
           amountPaise: input.amountPaise,
           keyId: process.env.RAZORPAY_KEY_ID ?? "",
+          endpoint: input.endpoint,
         }),
       };
     }
@@ -303,11 +322,17 @@ export async function executePayment(input: ExecutePaymentOptions): Promise<Paym
         orderKind: input.orderKind,
         receipt: input.receipt,
         description: input.description,
+        endpoint: input.endpoint,
       });
       return { status: "debit_created", debit: outcome };
     } catch (e) {
       const msg = e instanceof Error ? e.message : "Debit failed.";
-      logServer("payment", `Debit for known mandate failed — ${msg}`, { level: "error" });
+      logServer("payment", `Debit for known mandate failed — ${msg}`, {
+        level: "error",
+        step: "3.2",
+        rzpEndpoint: "/v1/payments/create/recurring",
+        ...(input.endpoint ? { endpoint: input.endpoint } : {}),
+      });
       return { status: "error", error: msg };
     }
   }
@@ -317,6 +342,7 @@ export async function executePayment(input: ExecutePaymentOptions): Promise<Paym
     localCustomerId,
     rzpCustomerId,
     amountPaise: input.amountPaise,
+    endpoint: input.endpoint,
   });
 
   if (mandateResolution.usable) {
@@ -325,6 +351,7 @@ export async function executePayment(input: ExecutePaymentOptions): Promise<Paym
       amountPaise: input.amountPaise,
       receipt: input.receipt,
       notes: input.notes ?? { source: "agentstore" },
+      endpoint: input.endpoint,
     });
     if (!charge.ok || !charge.orderId) {
       return { status: "error", error: charge.error ?? "Failed to create charge order.", code: "CHARGE_ORDER_FAILED" };
@@ -346,6 +373,7 @@ export async function executePayment(input: ExecutePaymentOptions): Promise<Paym
       contact: input.contact,
       name: input.name,
       description: input.description,
+      endpoint: input.endpoint,
     });
     if (debit.status === "captured") {
       if (debit.paymentId) {
@@ -356,6 +384,9 @@ export async function executePayment(input: ExecutePaymentOptions): Promise<Paym
         logServer("payment", `Debit captured but no payment id returned for order ${charge.orderId}`, {
           level: "warn",
           detail: { local_order_id: localOrderId },
+          step: "3.2",
+          rzpEndpoint: "/v1/payments/create/recurring",
+          ...(input.endpoint ? { endpoint: input.endpoint } : {}),
         });
       }
       return {
@@ -373,6 +404,7 @@ export async function executePayment(input: ExecutePaymentOptions): Promise<Paym
         localCustomerId,
         amountPaise: input.amountPaise,
         keyId: process.env.RAZORPAY_KEY_ID ?? "",
+        endpoint: input.endpoint,
       });
       return { status: "needs_authorisation", payload };
     }
@@ -389,20 +421,25 @@ export async function executePayment(input: ExecutePaymentOptions): Promise<Paym
     localCustomerId,
     amountPaise: input.amountPaise,
     keyId: process.env.RAZORPAY_KEY_ID ?? "",
+    endpoint: input.endpoint,
   });
   return { status: "needs_authorisation", payload };
 }
 
+/** Build the authorisation handoff (step 1.2 created the order server-side;
+ *  step 1.3 happens client-side in the Razorpay Checkout modal). */
 async function buildAuthorisationPayload(opts: {
   rzpCustomerId: string;
   localCustomerId: number;
   amountPaise: number;
   keyId: string;
+  endpoint?: string;
 }): Promise<AuthorisationPayload> {
   const auth = await createAuthorisationOrder({
     rzpCustomerId: opts.rzpCustomerId,
     blockPaise: blockForAmount(opts.amountPaise),
     receipt: `auth-${Date.now()}`,
+    endpoint: opts.endpoint,
   });
   if (!auth.ok || !auth.orderId) {
     throw new Error(auth.error ?? "Failed to create authorisation order.");
