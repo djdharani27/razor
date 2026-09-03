@@ -3,6 +3,14 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import ChatMessage from "@/components/agent/ChatMessage";
 import ChatInput from "@/components/agent/ChatInput";
+import { CustomerProfileForm } from "@/components/customer-profile";
+import type { CustomerProfile } from "@/components/customer-profile";
+import {
+  readSavedCustomer,
+  saveCustomer,
+  useSavedCustomer,
+} from "@/components/customer-profile";
+import type { AuthoriseResult } from "@/components/rzp-authorise-button";
 
 interface ToolCall {
   name: string;
@@ -17,12 +25,20 @@ interface DisplayMessage {
   toolCalls?: ToolCall[];
 }
 
+const inr = new Intl.NumberFormat("en-IN", { style: "currency", currency: "INR" });
+
 export default function AgentPage() {
   const [messages, setMessages] = useState<DisplayMessage[]>([]);
   const [loading, setLoading] = useState(false);
   const [sessionId, setSessionId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [showProfileForm, setShowProfileForm] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
+  const { customer, refresh } = useSavedCustomer();
+  // The customer profile collected in this chat session (via remember_customer),
+  // kept so the authorisation card can render even if localStorage has no
+  // profile yet.
+  const [chatCustomer, setChatCustomer] = useState<CustomerProfile | null>(null);
 
   // Auto-scroll to bottom on new messages
   useEffect(() => {
@@ -32,7 +48,7 @@ export default function AgentPage() {
   }, [messages, loading]);
 
   const sendMessage = useCallback(
-    async (text: string) => {
+    async (text: string, withCustomer: CustomerProfile | null = customer) => {
       if (loading) return;
 
       const userMsg: DisplayMessage = {
@@ -48,7 +64,13 @@ export default function AgentPage() {
         const res = await fetch("/api/agent/chat", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ message: text, sessionId }),
+          body: JSON.stringify({
+            message: text,
+            sessionId,
+            customer: withCustomer
+              ? { name: withCustomer.name, contact: withCustomer.contact, email: withCustomer.email ?? null }
+              : null,
+          }),
         });
 
         const data = await res.json();
@@ -62,6 +84,30 @@ export default function AgentPage() {
         // Save session ID from first response
         if (data.sessionId && !sessionId) {
           setSessionId(data.sessionId);
+        }
+
+        // Mirror a chat-collected customer into localStorage so the
+        // authorisation card (which reads the profile from localStorage) can
+        // render its "Approve UPI Reserve Pay block" button. remember_customer
+        // only stores the identity on the server session — without this sync
+        // the button would never appear when details are given in chat.
+        const remembered = (data.toolCalls as ToolCall[] | undefined)?.find(
+          (tc) =>
+            tc.name === "remember_customer" &&
+            (tc.result as Record<string, unknown> | null)?.saved === true
+        )?.result as { name?: string; contact?: string; email?: string | null } | undefined;
+        if (remembered?.name && remembered?.contact) {
+          const profile: CustomerProfile = {
+            name: String(remembered.name),
+            contact: String(remembered.contact),
+            email: remembered.email ?? null,
+          };
+          setChatCustomer(profile);
+          const saved = readSavedCustomer();
+          if (!saved || saved.contact !== profile.contact) {
+            saveCustomer(profile);
+            refresh();
+          }
         }
 
         const agentMsg: DisplayMessage = {
@@ -79,17 +125,43 @@ export default function AgentPage() {
         setLoading(false);
       }
     },
-    [loading, sessionId]
+    [loading, sessionId, customer, refresh]
+  );
+
+  const handleProfileSave = useCallback(
+    (profile: CustomerProfile) => {
+      saveCustomer(profile);
+      setShowProfileForm(false);
+      refresh();
+    },
+    [refresh]
+  );
+
+  const handleAuthoriseDone = useCallback(
+    (result: AuthoriseResult & { amountPaise?: number }) => {
+      if (result.kind !== "success") return;
+      const debit = result.debit;
+      const paidMsg: DisplayMessage = {
+        id: `sys-${Date.now()}`,
+        role: "model",
+        text:
+          debit?.status === "captured" && debit?.orderId
+            ? `✅ Order #${debit.orderId} paid — the debit was captured from your UPI block. Anything else you need?`
+            : `✅ Your UPI block is approved${result.amountPaise ? ` and your order of ${inr.format(result.amountPaise / 100)} is being debited` : ""}. Anything else you need?`,
+      };
+      setMessages((prev) => [...prev, paidMsg]);
+    },
+    []
   );
 
   return (
-    <div className="flex h-screen flex-col bg-zinc-950">
+    <div className="flex h-screen flex-col bg-[#F4F4F0]">
       {/* Header */}
-      <header className="flex items-center justify-between border-b border-zinc-800 bg-zinc-900/60 px-6 py-3 backdrop-blur-md">
+      <header className="animate-slide-down flex items-center justify-between border-b-4 border-[#000000] bg-[#F4F4F0] px-6 py-3">
         <div className="flex items-center gap-3">
           <a
             href="/"
-            className="text-zinc-400 transition-colors hover:text-zinc-200"
+            className="flex h-9 w-9 items-center justify-center border-[3px] border-[#000000] bg-[#FFFFFF] text-[#000000] shadow-[4px_4px_0px_#000000] transition-all duration-150 hover:translate-x-[2px] hover:translate-y-[2px] hover:shadow-[2px_2px_0px_#000000] active:translate-x-[4px] active:translate-y-[4px] active:shadow-none"
             aria-label="Back to store"
           >
             <svg
@@ -106,46 +178,65 @@ export default function AgentPage() {
             </svg>
           </a>
           <div>
-            <h1 className="text-lg font-bold text-zinc-100">
-              AI Shopping Agent
+            <h1 className="text-lg font-black uppercase tracking-tight text-[#000000]">
+              Razor
             </h1>
-            <p className="text-xs text-zinc-500">
-              Powered by Gemini · UPI SBMD Payments
+            <p className="text-xs font-medium text-[#000000]/70">
+              Powered by Razorpay · Gemini
             </p>
           </div>
         </div>
         <div className="flex items-center gap-2">
-          <span className="inline-flex items-center gap-1.5 rounded-full bg-emerald-950/50 px-3 py-1 text-xs text-emerald-400">
-            <span className="h-1.5 w-1.5 rounded-full bg-emerald-400 animate-pulse" />
+          {customer ? (
+            <span className="inline-flex items-center gap-1.5 border-2 border-[#000000] bg-[#FFFFFF] px-3 py-1 text-xs font-bold text-[#000000] shadow-[3px_3px_0px_#000000]">
+              <span className="h-2 w-2 bg-[#000000]" />
+              {customer.name} · {customer.contact}
+            </span>
+          ) : (
+            <button
+              type="button"
+              onClick={() => setShowProfileForm((v) => !v)}
+              className="border-2 border-[#000000] bg-[#FFFFFF] px-3 py-1 text-xs font-bold text-[#000000] shadow-[3px_3px_0px_#000000] transition-all duration-150 hover:translate-x-[1px] hover:translate-y-[1px] hover:shadow-[2px_2px_0px_#000000] active:translate-x-[2px] active:translate-y-[2px] active:shadow-none"
+            >
+              + Add my details
+            </button>
+          )}
+          <span className="inline-flex items-center gap-1.5 border-2 border-[#000000] bg-[#000000] px-3 py-1 text-xs font-bold text-[#F4F4F0] shadow-[3px_3px_0px_#000000]">
+            <span className="h-2 w-2 animate-pulse bg-[#CCFF00]" />
             Agent Online
           </span>
         </div>
       </header>
 
       {/* Messages area */}
-      <div
-        ref={scrollRef}
-        className="flex-1 overflow-y-auto px-4 py-6"
-      >
+      <div ref={scrollRef} className="flex-1 overflow-y-auto px-4 py-6">
         <div className="mx-auto flex max-w-3xl flex-col gap-4">
+          {!customer && showProfileForm && (
+            <div className="animate-pop-in mx-auto w-full max-w-sm">
+              <CustomerProfileForm onSave={handleProfileSave} />
+            </div>
+          )}
+
           {messages.map((msg) => (
-            <ChatMessage
-              key={msg.id}
-              role={msg.role}
-              text={msg.text}
-              toolCalls={msg.toolCalls}
-            />
+            <div key={msg.id} className="animate-fade-up">
+              <ChatMessage
+                role={msg.role}
+                text={msg.text}
+                toolCalls={msg.toolCalls}
+                customer={customer ?? chatCustomer}
+                sessionId={sessionId}
+                onAuthoriseDone={handleAuthoriseDone}
+              />
+            </div>
           ))}
 
           {/* Loading indicator */}
-          {loading && (
-            <ChatMessage role="model" text="" isLoading />
-          )}
+          {loading && <ChatMessage role="model" text="" isLoading />}
 
           {/* Error banner */}
           {error && (
-            <div className="rounded-xl border border-red-500/30 bg-red-950/30 px-4 py-3 text-sm text-red-300">
-              <span className="font-medium">Error: </span>
+            <div className="animate-pop-in border-[3px] border-[#000000] bg-[#FFFFFF] px-4 py-3 text-sm font-medium text-[#000000] shadow-[4px_4px_0px_#000000]">
+              <span className="font-black uppercase text-[#FF0055]">Error: </span>
               {error}
             </div>
           )}
@@ -153,7 +244,7 @@ export default function AgentPage() {
       </div>
 
       {/* Input bar */}
-      <ChatInput onSend={sendMessage} disabled={loading} />
+      <ChatInput onSend={(text) => void sendMessage(text)} disabled={loading} />
     </div>
   );
 }

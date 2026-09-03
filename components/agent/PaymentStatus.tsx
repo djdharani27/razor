@@ -8,10 +8,8 @@ interface PaymentStatusProps {
 }
 
 const STEPS = [
-  { key: "order_created", label: "Charge Order Created", icon: "📋" },
-  { key: "payment_pending", label: "Processing Payment", icon: "⏳" },
-  { key: "payment_scheduled", label: "Payment Scheduled (25h)", icon: "🕐" },
-  { key: "payment_captured", label: "Payment Captured", icon: "✅" },
+  { key: "customer_saved", label: "Customer Saved", icon: "👤" },
+  { key: "captured", label: "Payment Captured", icon: "✅" },
 ];
 
 function stepIndex(status: string): number {
@@ -26,95 +24,87 @@ export default function PaymentStatus({
   errorMessage,
 }: PaymentStatusProps) {
   const currentIdx = stepIndex(status);
-  const isError = status === "error";
+  const isError = status === "failed" || status === "error";
+  const isCustomerSaved = status === "customer_saved";
+  const isCaptured = status === "captured";
 
   return (
-    <div className="my-2 overflow-hidden rounded-xl border border-zinc-700/60 bg-gradient-to-br from-zinc-900 to-zinc-950">
+    <div className="animate-fade-up my-2 border-[3px] border-[#000000] bg-[#FFFFFF] shadow-[4px_4px_0px_#000000]">
       {/* Header */}
-      <div className="flex items-center gap-2 border-b border-zinc-800 px-4 py-3">
+      <div className="flex items-center gap-2 border-b-[3px] border-[#000000] bg-[#F4F4F0] px-4 py-3">
         <span className="text-lg">💳</span>
-        <span className="text-sm font-semibold text-zinc-100">
-          UPI SBMD Payment
+        <span className="text-sm font-black uppercase tracking-tight text-[#000000]">
+          UPI Reserve Pay
         </span>
         {amount && (
-          <span className="ml-auto rounded-full bg-indigo-900/50 px-2.5 py-0.5 text-xs font-medium text-indigo-300">
+          <span className="ml-auto border-2 border-[#000000] bg-[#FF0055] px-2.5 py-0.5 text-xs font-black text-[#FFFFFF]">
             {amount}
           </span>
         )}
       </div>
 
-      {/* Steps */}
       <div className="px-4 py-3">
-        <div className="flex flex-col gap-2">
-          {STEPS.map((step, i) => {
-            const isDone = currentIdx >= i;
-            const isCurrent = currentIdx === i;
-            const isScheduled = step.key === "payment_scheduled" && status === "payment_scheduled";
+        {/* Steps stepper for recognised statuses */}
+        {!isCustomerSaved && !isCaptured && !isError && (
+          <div className="flex flex-col gap-2">
+            {STEPS.map((step, i) => {
+              const isDone = currentIdx >= i;
+              const isCurrent = currentIdx === i && !isCustomerSaved;
+              return (
+                <div key={step.key} className="flex items-center gap-3">
+                  <span
+                    className={`flex h-7 w-7 shrink-0 items-center justify-center border-2 border-[#000000] text-xs transition-all duration-500 ${
+                      isDone ? "bg-[#CCFF00]" : "bg-[#FFFFFF] opacity-40"
+                    } ${isCurrent ? "animate-pulse" : ""}`}
+                  >
+                    {step.icon}
+                  </span>
+                  <span
+                    className={`text-sm font-bold transition-colors ${
+                      isDone ? "text-[#000000]" : "text-[#000000]/40"
+                    }`}
+                  >
+                    {step.label}
+                  </span>
+                  {isDone && !isCurrent && (
+                    <span className="ml-auto text-xs font-black text-[#000000]">✓</span>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        )}
 
-            return (
-              <div key={step.key} className="flex items-center gap-3">
-                <span
-                  className={`flex h-7 w-7 shrink-0 items-center justify-center rounded-full text-xs transition-all duration-500 ${
-                    isDone
-                      ? isScheduled
-                        ? "bg-amber-500/20 text-amber-400 ring-1 ring-amber-500/40"
-                        : "bg-emerald-500/20 text-emerald-400 ring-1 ring-emerald-500/40"
-                      : "bg-zinc-800 text-zinc-600"
-                  } ${isCurrent && !isScheduled ? "animate-pulse" : ""}`}
-                >
-                  {step.icon}
-                </span>
-                <span
-                  className={`text-sm transition-colors ${
-                    isDone
-                      ? isScheduled
-                        ? "font-medium text-amber-300"
-                        : "text-zinc-200"
-                      : "text-zinc-600"
-                  }`}
-                >
-                  {step.label}
-                </span>
-                {isDone && !isCurrent && (
-                  <span className="ml-auto text-xs text-emerald-500">✓</span>
-                )}
-              </div>
-            );
-          })}
-        </div>
+        {/* Customer saved */}
+        {isCustomerSaved && (
+          <div className="border-2 border-[#000000] bg-[#CCFF00] px-3 py-2 shadow-[3px_3px_0px_#000000]">
+            <p className="text-xs font-bold text-[#000000]">
+              👤 Details saved — you&apos;re ready to pay with UPI Reserve Pay.
+            </p>
+          </div>
+        )}
+
+        {/* Captured */}
+        {isCaptured && (
+          <div className="border-2 border-[#000000] bg-[#CCFF00] px-3 py-2 shadow-[3px_3px_0px_#000000]">
+            <p className="text-xs font-bold text-[#000000]">
+              ✅ Payment captured instantly from your UPI block — no PIN needed!
+            </p>
+          </div>
+        )}
 
         {/* Order ID */}
-        {orderId && (
-          <div className="mt-3 rounded-lg bg-zinc-800/50 px-3 py-2">
-            <span className="text-xs text-zinc-500">Order ID: </span>
-            <code className="text-xs text-zinc-300">{orderId}</code>
-          </div>
-        )}
-
-        {/* Scheduled message */}
-        {status === "payment_scheduled" && (
-          <div className="mt-3 rounded-lg border border-amber-500/20 bg-amber-500/5 px-3 py-2">
-            <p className="text-xs text-amber-200/90">
-              🕐 Razorpay requires a 25-hour waiting period after the pre-debit
-              notification. The payment will be automatically captured once this
-              window elapses.
-            </p>
-          </div>
-        )}
-
-        {/* Captured message */}
-        {status === "payment_captured" && (
-          <div className="mt-3 rounded-lg border border-emerald-500/20 bg-emerald-500/5 px-3 py-2">
-            <p className="text-xs text-emerald-200/90">
-              ✅ Payment successfully captured!
-            </p>
+        {orderId && (isCaptured || isError) && (
+          <div className="mt-3 border-2 border-[#000000] bg-[#F4F4F0] px-3 py-2">
+            <span className="text-xs font-bold uppercase text-[#000000]/60">Order ID: </span>
+            <code className="text-xs font-black text-[#000000]">{orderId}</code>
           </div>
         )}
 
         {/* Error */}
         {isError && errorMessage && (
-          <div className="mt-3 rounded-lg border border-red-500/20 bg-red-500/5 px-3 py-2">
-            <p className="text-xs text-red-300">{errorMessage}</p>
+          <div className="mt-3 border-2 border-[#000000] bg-[#FFFFFF] px-3 py-2 shadow-[3px_3px_0px_#FF0055]">
+            <p className="text-xs font-bold text-[#FF0055]">{errorMessage}</p>
           </div>
         )}
       </div>

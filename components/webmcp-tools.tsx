@@ -2,6 +2,7 @@
 
 import { useEffect, useRef } from "react";
 import { useCart } from "@/components/cart-context";
+import { readSavedCustomer } from "@/components/customer-profile";
 import type { CartItem, ModelContext, Product, WebMCPTool } from "@/lib/types";
 
 /**
@@ -235,7 +236,7 @@ export default function WebMCPTools() {
         id: "checkout",
         name: "checkout",
         description:
-          "Complete purchase of everything in the cart via Razorpay. This is a money-spending action and requires the current cart to be non-empty.",
+          "Complete purchase of everything in the cart via UPI Reserve Pay. Requires the customer's saved name + 10-digit mobile (saved locally when they first check out). This is a money-spending action and requires the current cart to be non-empty.",
         inputSchema: { type: "object", properties: {} },
         annotations: { readOnlyHint: false, untrustedContentHint: true },
         execute: (input) =>
@@ -244,17 +245,28 @@ export default function WebMCPTools() {
             if (cart.length === 0) {
               return { error: "Cart is empty — add items before checking out." };
             }
+            const customer = readSavedCustomer();
+            if (!customer) {
+              return {
+                error:
+                  "No saved customer profile. Ask the user for their name and 10-digit mobile number, then tell them to click \"Checkout\" in the cart so they can save it once — after that purchases go through instantly.",
+              };
+            }
             const res = await fetch("/api/checkout", {
               method: "POST",
               headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({ items: cart }),
+              body: JSON.stringify({
+                items: cart,
+                customer: { name: customer.name, contact: customer.contact, email: customer.email ?? null },
+              }),
               signal,
             });
             const data = (await res.json()) as {
+              status?: "paid" | "needs_authorisation";
               orderId?: number;
-              razorpayOrderId?: string;
               error?: string;
               code?: string;
+              auth?: { orderId: string; customerId: string; keyId: string; blockPaise: number; expireAt: number };
             };
 
             if (!res.ok) {
@@ -266,13 +278,22 @@ export default function WebMCPTools() {
               };
             }
 
-            // Payment happens via the Razorpay Standard Checkout modal on the
-            // order page — direct the user there to complete it.
+            if (data.status === "needs_authorisation") {
+              return {
+                ok: false,
+                needsAuthorisation: true,
+                message:
+                  "The customer needs to approve a UPI Reserve Pay block once. Tell them to open /order flow in the cart drawer (or the store page) and click \"Approve UPI Reserve Pay block\" — a one-time ₹1 authorisation.",
+                blockPaise: data.auth?.blockPaise ?? null,
+              };
+            }
+
             clear();
             return {
               ok: true,
-              message: `Order ${data.orderId} created. Tell the user to open /order/${data.orderId} and click "Pay" to complete the payment in the Razorpay checkout popup.`,
+              message: `Order ${data.orderId} paid instantly from the customer's UPI Reserve Pay block. Tell the user their order is confirmed at /order/${data.orderId}.`,
               orderId: data.orderId,
+              paid: true,
             };
           }),
       },

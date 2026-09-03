@@ -1,5 +1,9 @@
-// Simulates a Razorpay payment_link.paid webhook against your local server.
-// Usage: node scripts/simulate-webhook.mjs [paymentLinkId] [amountPaise]
+// Simulates Razorpay webhook events against your local server for the UPI
+// Reserve Pay rebuild.
+// Usage:
+//   node scripts/simulate-webhook.mjs captured   [razorpayOrderId] [paymentId] [tokenId]
+//   node scripts/simulate-webhook.mjs token-cancelled [tokenId]
+//   node scripts/simulate-webhook.mjs failed     [razorpayOrderId] [paymentId]
 //
 // Reads RAZORPAY_WEBHOOK_SECRET from .env.local and signs the payload exactly
 // the way Razorpay does (HMAC-SHA256 over the raw body).
@@ -25,26 +29,83 @@ if (!secret) {
   process.exit(1);
 }
 
-const paymentLinkId = process.argv[2] ?? "plink_test_example";
-const amountPaise = Number(process.argv[3] ?? 50000);
+const kind = process.argv[2] ?? "captured";
+const arg1 = process.argv[3] ?? "order_test_example";
+const arg2 = process.argv[4] ?? "pay_test_example";
+const arg3 = process.argv[5] ?? "token_test_example";
 
-const payload = {
-  entity: "event",
-  account_id: "acc_test_example",
-  event: "payment_link.paid",
-  contains: ["payment_link"],
-  payload: {
-    payment_link: {
-      entity: {
-        id: paymentLinkId,
-        amount: amountPaise,
-        currency: "INR",
-        status: "paid",
+let payload;
+switch (kind) {
+  case "captured": {
+    payload = {
+      entity: "event",
+      account_id: "acc_test_example",
+      event: "payment.captured",
+      contains: ["payment"],
+      payload: {
+        payment: {
+          entity: {
+            id: arg2,
+            entity: "payment",
+            order_id: arg1,
+            status: "captured",
+            amount: 50000,
+            currency: "INR",
+            token_id: arg3,
+          },
+        },
       },
-    },
-  },
-  created_at: Math.floor(Date.now() / 1000),
-};
+      created_at: Math.floor(Date.now() / 1000),
+    };
+    break;
+  }
+  case "failed": {
+    payload = {
+      entity: "event",
+      account_id: "acc_test_example",
+      event: "payment.failed",
+      contains: ["payment"],
+      payload: {
+        payment: {
+          entity: {
+            id: arg2,
+            entity: "payment",
+            order_id: arg1,
+            status: "failed",
+            amount: 50000,
+            currency: "INR",
+            token_id: arg3,
+          },
+        },
+      },
+      created_at: Math.floor(Date.now() / 1000),
+    };
+    break;
+  }
+  case "token-cancelled": {
+    payload = {
+      entity: "event",
+      account_id: "acc_test_example",
+      event: "token.cancelled",
+      contains: ["token"],
+      payload: {
+        token: {
+          entity: {
+            id: arg1,
+            entity: "token",
+            customer_id: arg2,
+            method: "upi",
+          },
+        },
+      },
+      created_at: Math.floor(Date.now() / 1000),
+    };
+    break;
+  }
+  default:
+    console.error(`Unknown event kind "${kind}" — use captured, failed, or token-cancelled.`);
+    process.exit(1);
+}
 
 const rawBody = JSON.stringify(payload);
 const signature = crypto.createHmac("sha256", secret).update(rawBody).digest("hex");
@@ -60,7 +121,7 @@ const res = await fetch(`${baseUrl}/api/webhook/razorpay`, {
 });
 
 console.log(`POST ${baseUrl}/api/webhook/razorpay`);
-console.log(`  payment_link_id: ${paymentLinkId}`);
-console.log(`  signature:       ${signature.slice(0, 24)}…`);
-console.log(`  status:          ${res.status} ${res.statusText}`);
-console.log(`  response:        ${await res.text()}`);
+console.log(`  event:   ${payload.event}`);
+console.log(`  id:      ${kind === "token-cancelled" ? arg1 : `${arg1} / payment ${arg2}`}`);
+console.log(`  status:  ${res.status} ${res.statusText}`);
+console.log(`  response: ${await res.text()}`);

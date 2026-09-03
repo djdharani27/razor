@@ -1,11 +1,18 @@
 "use client";
 
-import { useCallback, useState } from "react";
+import { useCallback, useRef, useState } from "react";
 import { useCart } from "@/components/cart-context";
 import CartDrawer from "@/components/cart-drawer";
 import AgentActivityPanel from "@/components/agent-activity-panel";
 import WebMCPTools from "@/components/webmcp-tools";
 import type { Product } from "@/lib/types";
+import {
+  CustomerProfileForm,
+  readSavedCustomer,
+  saveCustomer,
+  useSavedCustomer,
+  type CustomerProfile,
+} from "@/components/customer-profile";
 
 const inr = new Intl.NumberFormat("en-IN", { style: "currency", currency: "INR" });
 
@@ -13,14 +20,36 @@ function formatPaise(paise: number): string {
   return inr.format(paise / 100);
 }
 
+interface CheckoutResponse {
+  status?: "paid" | "needs_authorisation";
+  orderId?: number;
+  rzpOrderId?: string;
+  paymentId?: string | null;
+  amount?: number;
+  error?: string;
+  code?: string;
+  auth?: {
+    orderId: string;
+    customerId: string;
+    keyId: string;
+    blockPaise: number;
+    expireAt: number;
+    amountPaise: number;
+  };
+}
+
 export default function Storefront({ products }: { products: Product[] }) {
   const { add, items, totalQty } = useCart();
   const [cartOpen, setCartOpen] = useState(false);
   const [logOpen, setLogOpen] = useState(false);
-  const [checkoutState, setCheckoutState] = useState<"idle" | "loading" | "error">("idle");
+  const [checkoutState, setCheckoutState] = useState<"idle" | "loading" | "error" | "authorising" | "paid">("idle");
   const [checkoutError, setCheckoutError] = useState<string | null>(null);
+  const [pendingCustomer, setPendingCustomer] = useState<CustomerProfile | null>(null);
+  const { customer } = useSavedCustomer();
+  const authRef = useRef<{ orderId: string; customerId: string; keyId: string; blockPaise: number; expireAt: number; amountPaise: number } | null>(null);
 
-  const handleCheckout = useCallback(async () => {
+  /** Run the checkout: POST items + customer → debit or authorisation handoff. */
+  const runCheckout = useCallback(async (profile: CustomerProfile) => {
     if (items.length === 0) return;
     setCheckoutState("loading");
     setCheckoutError(null);
@@ -28,34 +57,67 @@ export default function Storefront({ products }: { products: Product[] }) {
       const res = await fetch("/api/checkout", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ items }),
+        body: JSON.stringify({
+          items,
+          customer: { name: profile.name, contact: profile.contact, email: profile.email ?? null },
+        }),
       });
-      const data = (await res.json()) as {
-        orderId?: number;
-        paymentLinkUrl?: string;
-        error?: string;
-        code?: string;
-      };
+      const data = (await res.json()) as CheckoutResponse;
 
       if (!res.ok) {
-        // Graceful rejection (spend cap, stock, etc.) — show the message.
-        setCheckoutError(
-          data.error ?? `Checkout failed with status ${res.status}.`
-        );
+        setCheckoutError(data.error ?? `Checkout failed with status ${res.status}.`);
         setCheckoutState("error");
         return;
       }
 
-      if (data.paymentLinkUrl) {
-        window.open(data.paymentLinkUrl, "_blank", "noopener,noreferrer");
+      if (data.status === "needs_authorisation" && data.auth) {
+        authRef.current = data.auth;
+        setPendingCustomer(profile);
+        setCheckoutState("authorising");
+        return;
       }
-      // Navigate to the confirmation page after the link opens.
-      window.location.href = `/order/${data.orderId}`;
+
+      // Paid immediately (mandate reused / fresh debit).
+      if (data.orderId) {
+        setCheckoutState("paid");
+        window.location.href = `/order/${data.orderId}`;
+      }
     } catch {
       setCheckoutError("Network error while reaching the checkout API.");
       setCheckoutState("error");
     }
   }, [items]);
+
+  const handleCheckout = useCallback(async () => {
+    if (items.length === 0 || checkoutState === "loading") return;
+    setCheckoutError(null);
+    const saved = readSavedCustomer();
+    if (saved) {
+      await runCheckout(saved);
+    } else {
+      // Show the inline profile form inside the cart drawer.
+      setPendingCustomer({ name: "", contact: "" });
+      setCheckoutState("authorising");
+    }
+  }, [items, checkoutState, runCheckout]);
+
+  const handleProfileSave = useCallback(
+    (profile: CustomerProfile) => {
+      const saved = saveCustomer(profile);
+      setPendingCustomer(null);
+      authRef.current = null;
+      void runCheckout(saved);
+    },
+    [runCheckout]
+  );
+
+  const handleAuthorised = useCallback(async () => {
+    // Mandate stored — retry the checkout; the debit should now go through.
+    setPendingCustomer(null);
+    authRef.current = null;
+    const saved = readSavedCustomer();
+    if (saved) await runCheckout(saved);
+  }, [runCheckout]);
 
   return (
     <main className="mx-auto max-w-6xl px-4 py-8">
@@ -66,7 +128,7 @@ export default function Storefront({ products }: { products: Product[] }) {
         <div>
           <h1 className="text-2xl font-bold text-zinc-100">AgentStore</h1>
           <p className="text-sm text-zinc-400">
-            AI-agent-friendly commerce demo · Razorpay test-mode payments
+            AI-agent-friendly commerce demo · UPI Reserve Pay payments
           </p>
         </div>
         <div className="flex items-center gap-3">
@@ -82,9 +144,11 @@ export default function Storefront({ products }: { products: Product[] }) {
           >
             UPI Reserve Pay SBMD sandbox
           </a>
-          <span className="rounded-full border border-emerald-900 bg-emerald-950/50 px-3 py-1 text-xs font-medium text-emerald-300">
-            ● WebMCP tools registered
-          </span>
+          {customer && (
+            <span className="hidden items-center gap-1.5 rounded-full border border-emerald-900 bg-emerald-950/50 px-3 py-1 text-xs font-medium text-emerald-300 md:inline-flex">
+              {customer.name}
+            </span>
+          )}
           <button
             type="button"
             onClick={() => setCartOpen(true)}
@@ -161,6 +225,10 @@ export default function Storefront({ products }: { products: Product[] }) {
         onCheckout={() => void handleCheckout()}
         checkoutState={checkoutState}
         checkoutError={checkoutError}
+        pendingCustomer={pendingCustomer}
+        authRef={authRef.current}
+        onProfileSave={(p) => handleProfileSave(p)}
+        onAuthorised={() => void handleAuthorised()}
       />
     </main>
   );

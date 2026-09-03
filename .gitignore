@@ -33,3 +33,6 @@ next-env.d.ts
 
 # UPI Reserve Pay SBMD sandbox — server-side step session
 .rzpdata-sbmd/
+
+# server-side payment/checkout logs (raw Razorpay bodies)
+.server-logs/

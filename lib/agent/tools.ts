@@ -1,14 +1,20 @@
 // Agent tool definitions and executors. Each tool maps to a Gemini function
 // declaration and an executor that runs server-side against the SQLite DB
-// and/or the Razorpay API (via the existing /api/rzp-sbmd proxy logic).
+// and/or the Razorpay API.
 //
-// The SBMD charge flow uses ONLY env-var IDs (customer_id, token_id) —
-// no new customers or mandates are created.
+// Payment tools implement the UPI Reserve Pay (single_block_multiple_debit)
+// flow against the shared orchestration in lib/payments.ts:
+//   remember_customer — records the customer identity on the session (and
+//                       resolves/creates their Razorpay customer).
+//   pay_cart_now       — resolves a reusable mandate and debits immediately, or
+//                       creates an authorisation order and hands back a
+//                       checkout payload for the client modal.
 
 import {
   getAllProducts,
   findProducts,
   getProductById,
+  getCustomerByContact,
 } from "@/lib/db";
 import type { Product } from "@/lib/types";
 import {
@@ -16,42 +22,20 @@ import {
   setCart,
   updatePayment,
   getPayment,
+  getCustomer,
+  setCustomer,
   type AgentSession,
 } from "@/lib/agent/session";
+import { logServer } from "@/lib/agent/server-log";
 import { Type, type FunctionDeclaration } from "@google/genai";
+import { executePayment, type AuthorisationPayload } from "@/lib/payments";
+import { ensureRzpCustomer } from "@/lib/rzp";
 
-// ---------------------------------------------------------------------------
-// Razorpay config from env
-// ---------------------------------------------------------------------------
-function rzpConfig() {
-  return {
-    keyId: process.env.RAZORPAY_KEY_ID ?? "",
-    keySecret: process.env.RAZORPAY_KEY_SECRET ?? "",
-    customerId: process.env.RAZORPAY_CUSTOMER_ID ?? "",
-    tokenId: process.env.RAZORPAY_TOKEN_ID ?? "",
-    email: process.env.RAZORPAY_CUSTOMER_EMAIL ?? "",
-    contact: process.env.RAZORPAY_CUSTOMER_CONTACT ?? "",
-  };
-}
-
-async function rzpFetch(endpoint: string, method: string, body?: unknown) {
-  const { keyId, keySecret } = rzpConfig();
-  const basicAuth = `Basic ${Buffer.from(`${keyId}:${keySecret}`).toString("base64")}`;
-  const hasBody = method !== "GET" && method !== "HEAD";
-  const res = await fetch(`https://api.razorpay.com${endpoint}`, {
-    method,
-    headers: {
-      Authorization: basicAuth,
-      "Content-Type": "application/json",
-    },
-    ...(hasBody ? { body: JSON.stringify(body ?? {}) } : {}),
-  });
-  const text = await res.text();
-  try {
-    return { ok: res.ok, status: res.status, data: JSON.parse(text) };
-  } catch {
-    return { ok: res.ok, status: res.status, data: { raw: text } };
-  }
+function normaliseContact(raw: string): string | null {
+  const digits = String(raw ?? "").replace(/[^\d]/g, "");
+  if (digits.length === 12 && digits.startsWith("91")) return digits.slice(2);
+  if (digits.length === 11 && digits.startsWith("0")) return digits.slice(1);
+  return digits.length === 10 ? digits : null;
 }
 
 // ---------------------------------------------------------------------------
@@ -114,13 +98,23 @@ export const toolDeclarations: FunctionDeclaration[] = [
     parameters: { type: Type.OBJECT, properties: {} },
   },
   {
-    name: "start_payment",
-    description: "Creates a Razorpay charge order (step 3.1) for the current cart total using the pre-authorized UPI SBMD mandate token. This sends a pre-debit notification to the customer. Returns the order details.",
-    parameters: { type: Type.OBJECT, properties: {} },
+    name: "remember_customer",
+    description:
+      "Records the customer's identity (name, 10-digit Indian mobile number, optional email) for payment. The customer must provide these — ask for them if missing. Call this before pay_cart_now on the first order.",
+    parameters: {
+      type: Type.OBJECT,
+      properties: {
+        name: { type: Type.STRING, description: "Customer's full name" },
+        contact: { type: Type.STRING, description: "Customer's 10-digit Indian mobile number" },
+        email: { type: Type.STRING, description: "Customer's email (optional)" },
+      },
+      required: ["name", "contact"],
+    },
   },
   {
-    name: "complete_payment",
-    description: "Executes the recurring payment (step 3.2) against the charge order created by start_payment. Uses the pre-authorized token. Returns payment result — either 'captured' or 'scheduled' (25h pre-debit hold is normal and means the payment will be automatically processed after 25 hours).",
+    name: "pay_cart_now",
+    description:
+      "Pays for the current cart total using UPI Reserve Pay. If the customer has a reusable mandate it debits immediately and returns status 'captured'. If not (first purchase or the block was used up), it creates an authorisation order and returns status 'needs_authorisation' with the checkout details the customer must approve in the popup.",
     parameters: { type: Type.OBJECT, properties: {} },
   },
 ];
@@ -218,127 +212,158 @@ export async function executeTool(
       return cartWithDetails(sid);
     }
 
-    case "start_payment": {
-      const { customerId, tokenId, email, contact } = rzpConfig();
-      if (!customerId || !tokenId) {
-        return { error: "SBMD mandate not configured. Set RAZORPAY_CUSTOMER_ID and RAZORPAY_TOKEN_ID in env." };
+    case "remember_customer": {
+      const name = String(args.name ?? "").trim();
+      const rawContact = String(args.contact ?? "").trim();
+      const contact = normaliseContact(rawContact);
+      const email = args.email ? String(args.email).trim() : null;
+
+      if (name.length < 2) {
+        return { error: "Please provide the customer's full name (at least 2 characters)." };
+      }
+      if (!contact) {
+        return {
+          error: `Please provide a valid 10-digit Indian mobile number (got "${rawContact || "(empty)"}").`,
+        };
+      }
+
+      // Resolve the local customer (by contact) + the Razorpay customer.
+      const local = getCustomerByContact(contact);
+      const rzp = await ensureRzpCustomer({
+        name,
+        contact,
+        email,
+        existingRzpCustomerId: local?.rzp_customer_id ?? null,
+      });
+      const rzpCustomerId = rzp.ok ? rzp.rzpCustomerId ?? null : null;
+
+      setCustomer(sid, { name, contact, email, rzpCustomerId });
+      logServer("remember_customer", `Identity recorded for ${name}`, {
+        detail: { contact, rzp_customer_id: rzpCustomerId, session: sid },
+      });
+
+      return {
+        message: `Thanks, ${name}! Your details are saved for this conversation.`,
+        name,
+        contact,
+        ...(email ? { email } : {}),
+        saved: true,
+      };
+    }
+
+    case "pay_cart_now": {
+      const customer = getCustomer(sid);
+      if (!customer) {
+        return {
+          error:
+            "I don't have the customer's payment details yet. Ask for their name and 10-digit mobile number, then call remember_customer.",
+          code: "CUSTOMER_REQUIRED",
+        };
       }
 
       const cartInfo = cartWithDetails(sid);
       if (cartInfo.items.length === 0) {
-        return { error: "Cart is empty. Add items before starting payment." };
+        return { error: "Cart is empty. Add items before paying." };
       }
-
       const amountPaise = cartInfo.total_paise;
-      const payment = getPayment(sid);
-      const receiptNo = payment.receiptNo;
 
-      // Step 3.1: Create charge order with notification.token_id
-      const orderBody = {
-        amount: amountPaise,
-        currency: "INR",
-        payment_capture: true,
-        receipt: `Receipt No. ${receiptNo}`,
-        notification: {
-          token_id: tokenId,
-        },
-        notes: {
-          customer_id: customerId,
-          customer_email: email,
-          customer_contact: contact,
-          source: "ai_agent",
-        },
-      };
-
-      const result = await rzpFetch("/v1/orders", "POST", orderBody);
-
-      if (!result.ok) {
-        updatePayment(sid, {
-          status: "error",
-          errorMessage: result.data?.error?.description ?? `Order creation failed (${result.status})`,
-        });
-        return { error: result.data?.error?.description ?? "Failed to create charge order", razorpay_response: result.data };
-      }
-
-      const orderId = result.data.id;
       updatePayment(sid, {
-        chargeOrderId: orderId,
-        status: "order_created",
+        status: "debit_created",
         amountPaise,
-        receiptNo: receiptNo + 1,
         errorMessage: null,
       });
 
-      return {
-        message: "Charge order created successfully. Pre-debit notification sent to customer.",
-        order_id: orderId,
-        amount: formatPaise(amountPaise),
-        amount_paise: amountPaise,
-        receipt: `Receipt No. ${receiptNo}`,
-        notification_status: result.data.notification?.status ?? "created",
-        note: "The recurring payment can be executed next. Due to Razorpay's 25-hour pre-debit notification window, the payment will be scheduled if attempted before that window elapses.",
-      };
-    }
-
-    case "complete_payment": {
-      const { customerId, tokenId, email, contact } = rzpConfig();
-      const payment = getPayment(sid);
-
-      if (!payment.chargeOrderId) {
-        return { error: "No charge order exists. Run start_payment first to create a charge order." };
+      let resolution;
+      try {
+        resolution = await executePayment({
+          name: customer.name,
+          contact: customer.contact,
+          email: customer.email ?? null,
+          amountPaise,
+          items: cartInfo.items.map((i) => ({ productId: i.productId, qty: i.quantity })),
+          orderKind: "charge",
+          receipt: `Receipt No. ${getPayment(sid).receiptNo}`,
+          description: `AI Agent payment — ${cartInfo.items.map((i) => i.name).join(", ")}`,
+          notes: { source: "ai_agent" },
+        });
+      } catch (err) {
+        const message = err instanceof Error ? err.message : "Payment could not be completed.";
+        logServer("pay_cart_now", `Payment error: ${message}`, { level: "error" });
+        updatePayment(sid, { status: "failed", errorMessage: message });
+        return { error: message, status: "failed" };
       }
 
-      // Step 3.2: Create recurring payment
-      const cartInfo = cartWithDetails(sid);
-      const paymentBody = {
-        email,
-        contact,
-        amount: payment.amountPaise,
-        currency: "INR",
-        order_id: payment.chargeOrderId,
-        customer_id: customerId,
-        token: tokenId,
-        recurring: true,
-        description: `AI Agent payment - ${cartInfo.items.map((i) => i.name).join(", ")}`,
-        notes: {
-          source: "ai_agent",
-          cart_items: cartInfo.items.map((i) => `${i.quantity}x ${i.name}`).join(", "),
-        },
-      };
-
-      const result = await rzpFetch("/v1/payments/create/recurring", "POST", paymentBody);
-
-      // The 25-hour pre-debit hold error is expected and means the payment is scheduled
-      const isPreDebitHold =
-        result.data?.error?.description === "Payment can only be attempted 25 hours after the notification is delivered" ||
-        result.data?.error?.reason === "pre_debit_notification_pending";
-
-      if (isPreDebitHold) {
-        updatePayment(sid, { status: "payment_scheduled" });
+      if (resolution.status === "needs_authorisation") {
+        const payload: AuthorisationPayload = resolution.payload;
+        const pendingCart = getCart(sid).map((i) => ({ productId: i.productId, qty: i.qty }));
+        updatePayment(sid, {
+          status: "needs_authorisation",
+          authOrderId: payload.orderId,
+          amountPaise,
+        });
+        logServer("pay_cart_now", `Authorisation required (order ${payload.orderId})`, {
+          detail: { amount_paise: amountPaise, session: sid },
+        });
         return {
-          status: "scheduled",
-          message: "Payment has been scheduled! Razorpay requires a 25-hour window after the pre-debit notification before the payment can be captured. The payment will be automatically processed once this window elapses.",
-          order_id: payment.chargeOrderId,
-          amount: formatPaise(payment.amountPaise),
+          status: "needs_authorisation",
+          message:
+            "This is your first UPI Reserve Pay purchase (or your previous block was used up). You need to approve a one-time block of funds in the UPI popup that just appeared — please click the approve button.",
+          amount: formatPaise(amountPaise),
+          amount_paise: amountPaise,
+          auth: {
+            orderId: payload.orderId,
+            customerId: payload.customerId,
+            keyId: payload.keyId,
+            blockPaise: payload.blockPaise,
+            expireAt: payload.expireAt,
+            amountPaise: payload.amountPaise,
+          },
+          // The parked cart is echoed so the client can pass it back to the
+          // confirm endpoint, which completes the debit after the mandate is
+          // stored.
+          pendingDebit: {
+            items: pendingCart,
+            amountPaise,
+            description: `AI Agent payment — ${cartInfo.items.map((i) => i.name).join(", ")}`,
+            receipt: `Receipt No. ${getPayment(sid).receiptNo}`,
+          },
         };
       }
 
-      if (!result.ok) {
-        updatePayment(sid, {
-          status: "error",
-          errorMessage: result.data?.error?.description ?? `Payment failed (${result.status})`,
-        });
-        return { error: result.data?.error?.description ?? "Recurring payment failed", razorpay_response: result.data };
+      if (resolution.status === "error") {
+        logServer("pay_cart_now", `Payment rejected: ${resolution.error}`, { level: "error" });
+        updatePayment(sid, { status: "failed", errorMessage: resolution.error });
+        return { error: resolution.error, status: "failed", code: resolution.code };
       }
 
-      // Payment captured successfully
-      updatePayment(sid, { status: "payment_captured" });
+      const { debit } = resolution;
+      // Debit captured — clear the cart and record the order.
+      setCart(sid, []);
+      const payment = getPayment(sid);
+      updatePayment(sid, {
+        status: "captured",
+        chargeOrderId: debit.rzpOrderId,
+        lastOrderId: debit.localOrderId,
+        receiptNo: payment.receiptNo + 1,
+        authOrderId: null,
+      });
+      logServer("pay_cart_now", `Payment captured for order #${debit.localOrderId}`, {
+        detail: {
+          session: sid,
+          local_order_id: debit.localOrderId,
+          rzp_order_id: debit.rzpOrderId,
+          payment_id: debit.paymentId ?? null,
+          amount_paise: amountPaise,
+        },
+      });
       return {
         status: "captured",
-        message: "Payment captured successfully!",
-        payment_id: result.data.razorpay_payment_id ?? result.data.id,
-        order_id: payment.chargeOrderId,
-        amount: formatPaise(payment.amountPaise),
+        message: "Payment captured!",
+        orderId: debit.localOrderId,
+        rzpOrderId: debit.rzpOrderId,
+        paymentId: debit.paymentId ?? null,
+        amount: formatPaise(amountPaise),
+        amount_paise: amountPaise,
       };
     }
 

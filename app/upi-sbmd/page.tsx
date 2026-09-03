@@ -6,7 +6,6 @@ import {
   STEP_MAP,
   STEP_ORDER,
   orderDefaultExpiry,
-  PRE_DEBIT_HOLD_MESSAGE,
   type StepId,
 } from "@/lib/upi-sbmd/steps";
 import { openUpiAuthCheckout, checkoutOutcomeBody } from "@/lib/upi-sbmd/checkout";
@@ -73,8 +72,9 @@ function parseObject(raw: string): Record<string, unknown> | null {
   }
 }
 
-// The PLAN.md order sample carries a stale token.expire_at that Razorpay
-// rejects (SBMD caps it at 90 days). Always surface a valid default instead.
+// The step 1.2 order template leaves token.expire_at empty (it must be within
+// the SBMD 90-day window). Surface a fresh, valid default when the visible
+// order input is missing one or has one outside the allowed range.
 function orderBodyWithValidExpiry(existing: string | undefined): string {
   const base = existing && existing.trim() ? parseObject(existing) : null;
   const baseObj = base ?? (parseObject(STEP_MAP.createOrder.defaultBody) as Record<string, unknown>);
@@ -160,39 +160,14 @@ function mandateRegisteredFromBody(body: string): boolean {
   }
 }
 
-// Razorpay's UPI Reserve Pay flow enforces a 25-hour pre-debit window: after
-// step 3.1 creates an order with notification.token_id, a pre-debit
-// notification is delivered to the customer and the debit can only be
-// attempted 25 hours later. If step 3.2 is run before that window elapses,
-// Razorpay rejects it with this exact error. For the SBMD test harness that is
-// a *scheduled* outcome, not a failure — treat it as handled.
-
-function isPreDebitHoldError(body: string): boolean {
-  try {
-    const v = JSON.parse(body) as {
-      error?: { description?: string; reason?: string; code?: string };
-    };
-    return (
-      v?.error?.description === PRE_DEBIT_HOLD_MESSAGE ||
-      v?.error?.reason === "pre_debit_notification_pending" ||
-      v?.error?.code === "PRE_DEBIT_NOTIFICATION_PENDING"
-    );
-  } catch {
-    return false;
-  }
-}
-
-// Resolve which payment id step 2.1 should fetch. Precedence:
-// 1. A deliberately edited id in the step's editor (anything other than the
-//    bundled doc-sample id) — a manual fetch overrides auto-wiring.
-// 2. The razorpay_payment_id from the step 1.3 checkout output (authoritative
+// Resolve which payment id step 2.1 should fetch. Only real ids are accepted:
+// 1. The razorpay_payment_id from the step 1.3 checkout result (authoritative
 //    for the last mandate registered in this session).
-// 3. Whatever id is in the editor (the sample), so a fresh browser still has a
-//    runnable default.
+// 2. A deliberately edited id in the step's editor — a manual fetch overrides
+//    auto-wiring.
 function resolveFetchPaymentId(input: {
   editorInput: string | undefined;
   checkoutOutput: string | undefined;
-  sampleId: string;
 }): string {
   const pasted = (() => {
     try {
@@ -212,34 +187,13 @@ function resolveFetchPaymentId(input: {
     })(),
     "razorpay_payment_id"
   );
-  return pasted && pasted !== input.sampleId ? pasted : (saved ?? pasted);
-}
-
-// Resolve the token_id for charge steps (3.1 notification.token_id, 3.2 token)
-// from the step 2.1 output. The saved token_id from the fetched authorisation
-// payment is authoritative for the current mandate; the editor's value (e.g.
-// a doc sample or manual paste) is only a fallback when 2.1 hasn't run.
-function resolveTokenId(args: {
-  pasted: string;
-  fetchOutput: string | undefined;
-}): string {
-  const saved = extractField(
-    (() => {
-      try {
-        return JSON.parse(args.fetchOutput ?? "");
-      } catch {
-        return null;
-      }
-    })(),
-    "token_id"
-  );
-  return saved ?? args.pasted;
+  return saved ?? pasted;
 }
 
 // 3.2 requires email/contact matching the customer. When the step 1.1
 // customer output exists, its email/contact are authoritative (the flow's
-// customer may differ from the doc sample in the editor). Only when the
-// customer output has none do the editor's values remain.
+// customer may differ from the editor). Only when the customer output has
+// none do the editor's values remain.
 function withCustomerContact(
   parsed: Record<string, unknown>,
   customerOutput: string | undefined
@@ -499,9 +453,9 @@ export default function Home() {
 
   const apiReady = configured && !!state.keyId;
 
-  // Any step can run at any stage — nothing is gated on earlier steps having
-  // succeeded. Steps that need ids resolve them from the earlier outputs at
-  // run time (or from values pasted manually into the step's input).
+  // Steps run front-to-back: a step that needs an id from an earlier step
+  // auto-wires it from that step's real output at run time (or from a value
+  // deliberately pasted into the step's input), and refuses to run without it.
 
   async function runStep(id: StepId) {
     const def = STEP_MAP[id];
@@ -519,48 +473,59 @@ export default function Home() {
       return;
     }
 
-    // Steps that reference an id created by an earlier step (order → customer,
-    // checkout → order + customer, fetch payment → checkout payment) run
-    // standalone too: when the earlier step's saved output already carries the
-    // id, inject it at run time so a manual paste is only needed if that output
-    // is missing or stale.
-    let finalBody = requestBody;
-    let resolvedEndpoint = stepEndpoint(id);
-    if (id === "createOrder") {
-      const customerId = extractField(
-        (() => {
-          try {
-            return JSON.parse(state.outputs.createCustomer ?? "");
-          } catch {
-            return null;
-          }
-        })(),
-        "customer_id"
-      );
-      if (customerId) {
-        const parsed = JSON.parse(requestBody) as Record<string, unknown>;
-        finalBody = JSON.stringify({ ...parsed, customer_id: customerId }, null, 2);
+    // Step 1.1 creates a real Razorpay customer — refuse to run with empty
+    // name/contact so we never create junk records. All other ids are checked
+    // below at the point they are consumed.
+    if (id === "createCustomer") {
+      const parsed = JSON.parse(requestBody) as Record<string, unknown>;
+      const name = String(parsed.name ?? "").trim();
+      const contact = String(parsed.contact ?? "").trim();
+      if (name.length < 2) {
+        alert("Step 1.1 needs a real customer name (at least 2 characters).");
+        return;
+      }
+      if (!/^[0-9]{10,15}$/.test(contact.replace(/[^0-9]/g, ""))) {
+        alert("Step 1.1 needs a real customer contact (10-digit Indian mobile, e.g. 9876543210).");
+        return;
       }
     }
-    if (id === "fetchPayment") {
-      const sampleId = (() => {
+
+    // Every step that references an id created by an earlier step (order →
+    // customer, checkout → order + customer, fetch payment → checkout payment,
+    // 3.2 → 3.1 order + 1.1 customer + 2.1 token) auto-wires it from that
+    // step's REAL Razorpay response. No doc-sample values are ever used: if a
+    // required id has no real source yet, the step is refused so a user can
+    // never accidentally POST a hardcoded/fake id to Razorpay.
+    let finalBody = requestBody;
+    let resolvedEndpoint = stepEndpoint(id);
+    const realCustomerId = extractField(
+      (() => {
         try {
-          const s = JSON.parse(STEP_MAP.fetchPayment.defaultBody) as {
-            id?: unknown;
-          };
-          return typeof s.id === "string" ? s.id : "";
+          return JSON.parse(state.outputs.createCustomer ?? "");
         } catch {
-          return "";
+          return null;
         }
-      })();
+      })(),
+      "customer_id"
+    );
+    if (id === "createOrder") {
+      if (!realCustomerId) {
+        alert(
+          `Step ${def.num} needs a real customer_id. Run step ${STEP_MAP.createCustomer.num} first (its API response provides the customer_id), or paste a real one into this step's input.`
+        );
+        return;
+      }
+      const parsed = JSON.parse(requestBody) as Record<string, unknown>;
+      finalBody = JSON.stringify({ ...parsed, customer_id: realCustomerId }, null, 2);
+    }
+    if (id === "fetchPayment") {
       const payId = resolveFetchPaymentId({
         editorInput: requestBody,
         checkoutOutput: state.outputs.createAuthPayment,
-        sampleId,
       });
       if (!payId) {
         alert(
-          `The ${def.num} fetch needs a payment id. Run step ${STEP_MAP.createAuthPayment.num} to register a mandate, or paste a razorpay_payment_id (e.g. {"id": "pay_..."}) into this step's input.`
+          `The ${def.num} fetch needs a real payment id. Run step ${STEP_MAP.createAuthPayment.num} and approve the UPI block in the popup (the checkout result carries the razorpay_payment_id), or paste a real one into this step's input.`
         );
         return;
       }
@@ -571,52 +536,32 @@ export default function Home() {
       resolvedEndpoint = def.endpoint.replace(":id", payId);
     }
     if (id === "createChargeOrder") {
+      // No notification is sent on the 3.1 charge order — that avoids the
+      // 25-hour pre-debit hold and lets the 3.2 debit run immediately. Strip
+      // any notification the editor still carries so it never reaches Razorpay.
       const parsed = JSON.parse(requestBody) as Record<string, unknown>;
-      const notification =
-        parsed.notification && typeof parsed.notification === "object"
-          ? (parsed.notification as Record<string, unknown>)
-          : {};
-      const pastedToken =
-        typeof notification.token_id === "string"
-          ? notification.token_id.trim()
-          : "";
-      const tokenId = resolveTokenId({
-        pasted: pastedToken,
-        fetchOutput: state.outputs.fetchPayment,
-      });
-      if (tokenId && tokenId !== pastedToken) {
-        finalBody = JSON.stringify(
-          {
-            ...parsed,
-            notification: { ...notification, token_id: tokenId },
-          },
-          null,
-          2
-        );
+      const cleaned = { ...parsed };
+      delete cleaned.notification;
+      if (parsed.notes && typeof parsed.notes === "object") {
+        const hasKeys = Object.keys(parsed.notes).length > 0;
+        if (!hasKeys) delete cleaned.notes;
       }
+      finalBody = JSON.stringify(cleaned, null, 2);
     }
     if (id === "createRecurringPayment") {
       const parsed = JSON.parse(requestBody) as Record<string, unknown>;
-      const pastedToken =
-        typeof parsed.token === "string" ? parsed.token.trim() : "";
-      const tokenId = resolveTokenId({
-        pasted: pastedToken,
-        fetchOutput: state.outputs.fetchPayment,
-      });
-      // Saved outputs are authoritative for the current flow (fresh mandate →
-      // fresh ids). The editor's pasted values are the fallback when the
-      // producing steps haven't run yet.
-      const customerId = extractField(
+      const pastedToken = typeof parsed.token === "string" ? parsed.token.trim() : "";
+      const tokenId = extractField(
         (() => {
           try {
-            return JSON.parse(state.outputs.createCustomer ?? "");
+            return JSON.parse(state.outputs.fetchPayment ?? "");
           } catch {
             return null;
           }
         })(),
-        "customer_id"
+        "token_id"
       );
-      const orderId = extractField(
+      const chargeOrderId = extractField(
         (() => {
           try {
             return JSON.parse(state.outputs.createChargeOrder ?? "");
@@ -626,22 +571,34 @@ export default function Home() {
         })(),
         "order_id"
       );
-      const customerIdValue =
-        customerId ??
-        (typeof parsed.customer_id === "string" ? parsed.customer_id : "");
-      const orderIdValue =
-        orderId ?? (typeof parsed.order_id === "string" ? parsed.order_id : "");
+      if (!realCustomerId) {
+        alert(
+          `Step ${def.num} needs a real customer_id. Run step ${STEP_MAP.createCustomer.num} first, or paste a real one into this step's input.`
+        );
+        return;
+      }
+      if (!chargeOrderId) {
+        alert(
+          `Step ${def.num} needs a real order_id. Run step ${STEP_MAP.createChargeOrder.num} first, or paste a real one into this step's input.`
+        );
+        return;
+      }
+      if (!tokenId && !pastedToken) {
+        alert(
+          `Step ${def.num} needs a real token. Run step ${STEP_MAP.fetchPayment.num} first (its API response provides the token_id), or paste a real one into this step's input.`
+        );
+        return;
+      }
       const tokenValue = tokenId ?? pastedToken;
       const next = withCustomerContact(
-        { ...parsed },
+        { ...parsed, customer_id: realCustomerId, order_id: chargeOrderId, token: tokenValue },
         state.outputs.createCustomer
       );
-      if (tokenValue) next.token = tokenValue;
-      if (customerIdValue) next.customer_id = customerIdValue;
-      if (orderIdValue) next.order_id = orderIdValue;
-      if (JSON.stringify(next) !== JSON.stringify(parsed)) {
-        finalBody = JSON.stringify(next, null, 2);
+      if (next.notes && typeof next.notes === "object") {
+        const hasKeys = Object.keys(next.notes).length > 0;
+        if (!hasKeys) delete next.notes;
       }
+      finalBody = JSON.stringify(next, null, 2);
     }
 
     setRunning(id);
@@ -651,40 +608,15 @@ export default function Home() {
       body: finalBody,
     });
 
-    // The 25-hour pre-debit hold is an expected intermediate state for the
-    // charge steps (3.1 notification → 3.2 debit). Surface it as handled
-    // ("payment scheduled") rather than a red failure.
-    const preDebitHold =
-      (id === "createRecurringPayment" || id === "createChargeOrder") &&
-      isPreDebitHoldError(outcome.pretty);
-
-    const handledOutcome = preDebitHold
-      ? {
-          ...outcome,
-          ok: true,
-          pretty: JSON.stringify(
-            {
-              status: "scheduled",
-              message:
-                "Payment notified to the customer. Razorpay allows the debit only 25 hours after the notification is delivered, so this charge is scheduled and will be attempted automatically once the window elapses.",
-              razorpay_response: outcome.responseJson,
-            },
-            null,
-            2
-          ),
-          errorMessage: null,
-        }
-      : outcome;
-
-    mergeOutput(id, handledOutcome.pretty);
+    mergeOutput(id, outcome.pretty);
     setLastResult((prev) => ({
       ...prev,
       [id]: {
-        status: handledOutcome.status,
-        ok: handledOutcome.ok,
-        ms: handledOutcome.ms,
+        status: outcome.status,
+        ok: outcome.ok,
+        ms: outcome.ms,
         keyIdPreview: maskKeyId(state.keyId),
-        label: preDebitHold ? "scheduled · 25h" : undefined,
+        label: undefined,
       },
     }));
 
@@ -693,15 +625,15 @@ export default function Home() {
       label: def.title,
       endpoint: resolvedEndpoint,
       method: def.method,
-      status: handledOutcome.ok ? 200 : handledOutcome.status,
-      ok: handledOutcome.ok,
+      status: outcome.ok ? 200 : outcome.status,
+      ok: outcome.ok,
       requestBody,
-      responseBody: handledOutcome.pretty,
-      responseJson: handledOutcome.responseJson,
-      ms: handledOutcome.ms,
-      at: handledOutcome.at,
+      responseBody: outcome.pretty,
+      responseJson: outcome.responseJson,
+      ms: outcome.ms,
+      at: outcome.at,
       keyIdPreview: maskKeyId(state.keyId),
-      statusLabel: preDebitHold ? "scheduled · 25h" : undefined,
+      statusLabel: undefined,
     };
     setHistory((h) => [entry, ...h].slice(0, MAX_AUTO));
     setRunning(null);
@@ -717,8 +649,8 @@ export default function Home() {
 
     // Read the Checkout options editor first — pasted order_id / customer_id
     // here override (and are preferred over) the earlier saved outputs, so the
-    // step runs standalone at any stage. Sanitized the same way below: those
-    // keys are always consumed as ids, never passed through to checkout.js.
+    // step can resume after a reload. Sanitized the same way below: those keys
+    // are always consumed as ids, never passed through to checkout.js.
     let extras: Record<string, unknown> = {};
     const rawInput = state.inputs[id]?.trim();
     if (rawInput) {
@@ -912,22 +844,13 @@ export default function Home() {
   // only known at run time from the id the editor / earlier output supplies.
   // Show the best known form statically: a deliberately edited id in this
   // step's editor wins; otherwise the saved 1.3 payment id; otherwise the
-  // placeholder shape.
+  // placeholder shape (the step will not run until a real id exists).
   const displayEndpoint = (id: StepId): string => {
     const def = STEP_MAP[id];
     if (def.method === "GET" && def.endpoint.includes(":id")) {
-      const sampleId = (() => {
-        try {
-          const s = JSON.parse(def.defaultBody) as { id?: unknown };
-          return typeof s.id === "string" ? s.id : "";
-        } catch {
-          return "";
-        }
-      })();
       const payId = resolveFetchPaymentId({
         editorInput: state.inputs[id],
         checkoutOutput: state.outputs.createAuthPayment,
-        sampleId,
       });
       return payId
         ? def.endpoint.replace(":id", payId)
@@ -963,11 +886,11 @@ export default function Home() {
           UPI Reserve Pay (SBMD) end to end: Group 1 registers the mandate
           (1.1 customer → 1.2 authorisation order → 1.3 Razorpay Checkout),
           Group 2 fetches the token (2.1 payment → token_id), Group 3 charges
-          the customer (3.1 charge order → 3.2 one-time payment). Each step
-          runs standalone at any stage — nothing is locked behind a previous
-          step. Steps pick up the ids they need from the earlier outputs
-          automatically when those exist (token_id, order_id, customer_id,
-          email/contact); otherwise paste them into the step&apos;s own JSON.
+          the customer (3.1 charge order → 3.2 one-time payment). Steps run
+          front-to-back; the ids each step needs (customer_id, order_id,
+          token_id, email/contact) are auto-filled from the previous step&apos;s
+          real Razorpay response — a step will not run until those exist. Paste
+          a real id into a step&apos;s JSON only to resume a flow after a reload.
           Every input and output is editable, and each run is kept in History
           below.
         </p>

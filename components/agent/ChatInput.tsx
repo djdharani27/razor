@@ -18,7 +18,12 @@ export default function ChatInput({
 
   function handleSend() {
     const trimmed = value.trim();
-    if (!trimmed || disabled) return;
+    if (disabled) return;
+    if (!trimmed) {
+      // Nothing to send yet — focus the input instead of silently ignoring.
+      inputRef.current?.focus();
+      return;
+    }
     onSend(trimmed);
     setValue("");
     // Refocus after send
@@ -33,34 +38,36 @@ export default function ChatInput({
   }
 
   return (
-    <div className="flex items-end gap-3 border-t border-zinc-800 bg-zinc-900/80 px-4 py-3 backdrop-blur-md">
-      <textarea
-        ref={inputRef}
-        value={value}
-        onChange={(e) => setValue(e.target.value)}
-        onKeyDown={handleKeyDown}
-        disabled={disabled}
-        placeholder={placeholder}
-        rows={1}
-        className="flex-1 resize-none rounded-xl border border-zinc-700 bg-zinc-950 px-4 py-3 text-sm text-zinc-100 placeholder-zinc-500 outline-none transition-colors focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500/40 disabled:opacity-50"
-        style={{ minHeight: "44px", maxHeight: "120px" }}
-      />
-      <button
-        type="button"
-        onClick={handleSend}
-        disabled={disabled || !value.trim()}
-        className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-indigo-600 text-white transition-all hover:bg-indigo-500 hover:scale-105 active:scale-95 disabled:opacity-40 disabled:hover:scale-100"
-        aria-label="Send message"
-      >
-        <svg
-          xmlns="http://www.w3.org/2000/svg"
-          viewBox="0 0 20 20"
-          fill="currentColor"
-          className="h-5 w-5"
+    <div className="flex items-center justify-center border-t-4 border-[#000000] bg-[#F4F4F0] px-4 py-3">
+      <div className="flex w-full items-end gap-3 sm:w-[60%]">
+        <textarea
+          ref={inputRef}
+          value={value}
+          onChange={(e) => setValue(e.target.value)}
+          onKeyDown={handleKeyDown}
+          disabled={disabled}
+          placeholder={placeholder}
+          rows={1}
+          className="flex-1 resize-none border-[3px] border-[#000000] bg-[#FFFFFF] px-4 py-3 text-sm font-medium text-[#000000] placeholder-[#000000]/40 shadow-[4px_4px_0px_#000000] outline-none transition-all duration-150 focus:shadow-[2px_2px_0px_#000000] disabled:opacity-50"
+          style={{ minHeight: "44px", maxHeight: "120px" }}
+        />
+        <button
+          type="button"
+          onClick={handleSend}
+          disabled={disabled}
+          aria-label="Send message"
+          className="flex h-12 w-12 shrink-0 items-center justify-center border-[3px] border-[#000000] bg-[#FF0055] text-[#FFFFFF] shadow-[4px_4px_0px_#000000] transition-all duration-150 hover:-translate-y-[1px] hover:shadow-[4px_6px_0px_#000000] active:translate-y-[2px] active:shadow-[2px_2px_0px_#000000] disabled:cursor-wait disabled:opacity-40 disabled:hover:translate-y-0 disabled:hover:shadow-[4px_4px_0px_#000000]"
         >
-          <path d="M3.105 2.289a.75.75 0 00-.826.95l1.414 4.925A1.5 1.5 0 005.135 9.25h6.115a.75.75 0 010 1.5H5.135a1.5 1.5 0 00-1.442 1.086l-1.414 4.926a.75.75 0 00.826.95 28.896 28.896 0 0015.293-7.154.75.75 0 000-1.115A28.897 28.897 0 003.105 2.289z" />
-        </svg>
-      </button>
+          <svg
+            xmlns="http://www.w3.org/2000/svg"
+            viewBox="0 0 20 20"
+            fill="currentColor"
+            className="h-5 w-5"
+          >
+            <path d="M3.105 2.289a.75.75 0 00-.826.95l1.414 4.925A1.5 1.5 0 005.135 9.25h6.115a.75.75 0 010 1.5H5.135a1.5 1.5 0 00-1.442 1.086l-1.414 4.926a.75.75 0 00.826.95 28.896 28.896 0 0015.293-7.154.75.75 0 000-1.115A28.897 28.897 0 003.105 2.289z" />
+          </svg>
+        </button>
+      </div>
     </div>
   );
 }

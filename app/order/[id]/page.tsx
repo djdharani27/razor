@@ -1,8 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import Script from "next/script";
-import { useCallback, useEffect, useState } from "react";
+import { useEffect, useState } from "react";
 import type { CartItem, Product } from "@/lib/types";
 
 const inr = new Intl.NumberFormat("en-IN", { style: "currency", currency: "INR" });
@@ -19,25 +18,8 @@ interface OrderData {
   createdAt: number;
 }
 
-interface RazorpayResponse {
-  razorpay_payment_id: string;
-  razorpay_order_id: string;
-  razorpay_signature: string;
-}
-
-type RazorpayConstructor = new (options: Record<string, unknown>) => {
-  open: () => void;
-  on: (event: string, handler: (res: { error?: { description?: string } }) => void) => void;
-};
-
-declare global {
-  interface Window {
-    Razorpay?: RazorpayConstructor;
-  }
-}
-
 const STATUS_LABEL: Record<OrderData["status"], string> = {
-  created: "Awaiting payment",
+  created: "Processing payment",
   paid: "Paid",
   failed: "Payment failed",
 };
@@ -53,11 +35,9 @@ export default function OrderPage({ params }: { params: { id: string } }) {
   const [order, setOrder] = useState<OrderData | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [products, setProducts] = useState<Product[]>([]);
-  const [scriptLoaded, setScriptLoaded] = useState(false);
-  const [paying, setPaying] = useState(false);
-  const [payError, setPayError] = useState<string | null>(null);
 
-  // Poll order status until it leaves the "created" state.
+  // Poll order status until it leaves the "created" state (the debit is created
+  // server-side, so this usually resolves on the first fetch).
   useEffect(() => {
     let cancelled = false;
     let timer: ReturnType<typeof setInterval> | undefined;
@@ -102,80 +82,6 @@ export default function OrderPage({ params }: { params: { id: string } }) {
     };
   }, []);
 
-  const handlePayment = useCallback(async () => {
-    if (!order || paying) return;
-    setPaying(true);
-    setPayError(null);
-    try {
-      const res = await fetch("/api/checkout", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          items: order.items.map((i) => ({ productId: i.productId, qty: i.qty })),
-        }),
-      });
-      const data = (await res.json()) as {
-        orderId?: number;
-        razorpayOrderId?: string;
-        amount?: number;
-        currency?: string;
-        keyId?: string;
-        error?: string;
-        code?: string;
-      };
-      if (!res.ok || !data.razorpayOrderId || !data.keyId) {
-        throw new Error(data.error ?? `Checkout failed with status ${res.status}.`);
-      }
-
-      const razorpay = typeof window !== "undefined" ? window.Razorpay : undefined;
-      if (!razorpay) throw new Error("Razorpay checkout failed to load.");
-
-      const rzp = new razorpay({
-        key: data.keyId,
-        amount: data.amount,
-        currency: data.currency ?? "INR",
-        name: "AgentStore",
-        description: `Order #${data.orderId} — Razorpay test mode`,
-        order_id: data.razorpayOrderId,
-        handler: async (response: RazorpayResponse) => {
-          try {
-            const verifyRes = await fetch("/api/verify", {
-              method: "POST",
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({
-                orderId: data.orderId,
-                razorpayOrderId: response.razorpay_order_id,
-                razorpayPaymentId: response.razorpay_payment_id,
-                razorpaySignature: response.razorpay_signature,
-              }),
-            });
-            const verifyData = (await verifyRes.json()) as { ok?: boolean; error?: string };
-            if (!verifyRes.ok || !verifyData.ok) {
-              throw new Error(verifyData.error ?? "Payment verification failed.");
-            }
-            // Re-fetch status — the poll will see "paid" and stop.
-            setPaying(false);
-          } catch (err) {
-            setPayError(err instanceof Error ? err.message : "Payment verification failed.");
-            setPaying(false);
-          }
-        },
-        modal: {
-          ondismiss: () => setPaying(false),
-        },
-        theme: { color: "#4f46e5" },
-      });
-      rzp.on("payment.failed", (res) => {
-        setPayError(res.error?.description ?? "Payment failed.");
-        setPaying(false);
-      });
-      rzp.open();
-    } catch (err) {
-      setPayError(err instanceof Error ? err.message : "Checkout failed.");
-      setPaying(false);
-    }
-  }, [order, paying]);
-
   if (error) {
     return (
       <main className="mx-auto flex min-h-screen max-w-2xl flex-col items-center justify-center px-4">
@@ -199,13 +105,6 @@ export default function OrderPage({ params }: { params: { id: string } }) {
 
   return (
     <main className="mx-auto max-w-2xl px-4 py-12">
-      <Script
-        src="https://checkout.razorpay.com/v1/checkout.js"
-        strategy="afterInteractive"
-        onLoad={() => setScriptLoaded(true)}
-        onError={() => setScriptLoaded(false)}
-      />
-
       <Link href="/" className="text-sm text-indigo-400 hover:text-indigo-300">
         ← Back to store
       </Link>
@@ -218,30 +117,19 @@ export default function OrderPage({ params }: { params: { id: string } }) {
         {STATUS_LABEL[order.status]}
       </span>
 
-      {order.status === "created" && (
+      {order.status === "paid" && (
         <p className="mt-3 text-sm text-zinc-400">
-          This page refreshes automatically once payment is confirmed.
+          Payment captured from your UPI Reserve Pay block — no PIN needed. 🎉
         </p>
       )}
-
       {order.status === "created" && (
-        <button
-          type="button"
-          onClick={handlePayment}
-          disabled={paying || !scriptLoaded}
-          className="mt-6 w-full rounded-lg bg-indigo-600 px-4 py-3 text-sm font-semibold text-white transition hover:bg-indigo-500 disabled:cursor-not-allowed disabled:opacity-50"
-        >
-          {paying
-            ? "Opening payment…"
-            : scriptLoaded
-              ? `Pay ${formatPaise(order.amountPaise)}`
-              : "Loading payment…"}
-        </button>
+        <p className="mt-3 text-sm text-zinc-400">
+          We&apos;re confirming your payment — this page refreshes automatically.
+        </p>
       )}
-
-      {payError && (
-        <p className="mt-3 rounded-lg border border-red-900 bg-red-950/40 px-3 py-2 text-sm text-red-300">
-          {payError}
+      {order.status === "failed" && (
+        <p className="mt-3 text-sm text-zinc-400">
+          The debit could not be completed. Please try again.
         </p>
       )}
 
@@ -272,7 +160,7 @@ export default function OrderPage({ params }: { params: { id: string } }) {
       </section>
 
       <p className="mt-6 text-xs text-zinc-500">
-        Placed at {new Date(order.createdAt).toLocaleString("en-IN")} · Razorpay test mode
+        Placed at {new Date(order.createdAt).toLocaleString("en-IN")} · UPI Reserve Pay
       </p>
     </main>
   );

@@ -1,6 +1,10 @@
 "use client";
 
+import { useCallback, useState } from "react";
 import PaymentStatus from "./PaymentStatus";
+import AuthoriseCard from "./AuthoriseCard";
+import type { CustomerProfile } from "@/components/customer-profile";
+import type { AuthoriseResult } from "@/components/rzp-authorise-button";
 
 interface ToolCall {
   name: string;
@@ -13,6 +17,13 @@ interface ChatMessageProps {
   text: string;
   toolCalls?: ToolCall[];
   isLoading?: boolean;
+  /** The customer profile saved in localStorage — enables the authorise card. */
+  customer?: CustomerProfile | null;
+  /** Agent session id — lets the server complete parked debits after approval. */
+  sessionId?: string | null;
+  /** Called after a successful authorisation so the parent can append a
+   *  system-style "payment captured" confirmation message. */
+  onAuthoriseDone?: (result: AuthoriseResult & { amountPaise?: number }) => void;
 }
 
 const inr = new Intl.NumberFormat("en-IN", {
@@ -21,6 +32,15 @@ const inr = new Intl.NumberFormat("en-IN", {
 });
 function formatPaise(paise: number): string {
   return inr.format(paise / 100);
+}
+
+interface AuthorisePayload {
+  orderId: string;
+  customerId: string;
+  keyId: string;
+  blockPaise: number;
+  expireAt: number;
+  amountPaise: number;
 }
 
 /** Extract product cards from tool results */
@@ -93,35 +113,87 @@ function extractCart(
   return null;
 }
 
-/** Extract payment status from tool results */
-function extractPaymentInfo(
-  toolCalls: ToolCall[]
-): { status: string; orderId?: string; amount?: string; errorMessage?: string } | null {
+interface PaymentToolInfo {
+  status: string;
+  orderId?: number;
+  rzpOrderId?: string;
+  amount?: string;
+  amountPaise?: number;
+  errorMessage?: string;
+}
+
+/** Extract payment status from pay_cart_now / remember_customer tool results. */
+function extractPaymentInfo(toolCalls: ToolCall[]): PaymentToolInfo | null {
   for (const tc of toolCalls) {
-    if (tc.name !== "start_payment" && tc.name !== "complete_payment") continue;
+    if (tc.name !== "pay_cart_now" && tc.name !== "remember_customer") continue;
     const r = tc.result as Record<string, unknown>;
-    if (r?.error) {
+    if (tc.name === "remember_customer") {
+      if (r?.saved) {
+        return { status: "customer_saved", amount: undefined };
+      }
+      if (r?.error) {
+        return { status: "error", errorMessage: String(r.error) };
+      }
+      continue;
+    }
+    const status = String(r?.status ?? "");
+    if (status === "needs_authorisation") continue; // rendered as AuthoriseCard
+    if (r?.error || status === "failed") {
       return {
-        status: "error",
-        errorMessage: String(r.error),
+        status: "failed",
+        errorMessage: String(r?.error ?? r?.message ?? ""),
+        amountPaise: Number(r?.amount_paise ?? 0) || undefined,
       };
     }
-    if (tc.name === "start_payment") {
+    if (status === "captured") {
       return {
-        status: "order_created",
-        orderId: String(r?.order_id ?? ""),
+        status: "captured",
+        orderId: Number(r?.orderId ?? 0) || undefined,
+        rzpOrderId: String(r?.rzpOrderId ?? ""),
         amount: String(r?.amount ?? ""),
+        amountPaise: Number(r?.amount_paise ?? 0) || undefined,
       };
     }
-    if (tc.name === "complete_payment") {
-      const s = String(r?.status ?? "");
-      return {
-        status: s === "scheduled" ? "payment_scheduled" : s === "captured" ? "payment_captured" : "error",
-        orderId: String(r?.order_id ?? ""),
-        amount: String(r?.amount ?? ""),
-        errorMessage: s === "error" ? String(r?.message ?? "") : undefined,
-      };
-    }
+  }
+  return null;
+}
+
+interface AuthoriseHandoff {
+  auth: AuthorisePayload;
+  amountPaise: number;
+  amountDisplay: string;
+  pendingDebit: { items: { productId: number; qty: number }[]; amountPaise: number; description?: string; receipt?: string };
+}
+
+/** Extract a needs_authorisation handoff from pay_cart_now. */
+function extractAuthoriseHandoff(toolCalls: ToolCall[]): AuthoriseHandoff | null {
+  for (const tc of toolCalls) {
+    if (tc.name !== "pay_cart_now") continue;
+    const r = tc.result as Record<string, unknown>;
+    if (r?.status !== "needs_authorisation") continue;
+    const auth = r.auth as AuthorisePayload | undefined;
+    if (!auth?.orderId || !auth?.customerId || !auth?.keyId) return null;
+    const amountPaise = Number(r.amount_paise ?? auth.amountPaise ?? 0) || 0;
+    const pendingDebit = (r.pendingDebit ?? {}) as Record<string, unknown>;
+    const rawItems = Array.isArray(pendingDebit.items) ? (pendingDebit.items as Record<string, unknown>[]) : [];
+    return {
+      auth: {
+        orderId: String(auth.orderId),
+        customerId: String(auth.customerId),
+        keyId: String(auth.keyId),
+        blockPaise: Number(auth.blockPaise ?? 0),
+        expireAt: Number(auth.expireAt ?? 0),
+        amountPaise: Number(auth.amountPaise ?? 0) || 0,
+      },
+      amountPaise,
+      amountDisplay: String(r.amount ?? formatPaise(amountPaise)),
+      pendingDebit: {
+        items: rawItems.map((i) => ({ productId: Number(i.productId), qty: Number(i.qty) })),
+        amountPaise,
+        description: pendingDebit.description ? String(pendingDebit.description) : undefined,
+        receipt: pendingDebit.receipt ? String(pendingDebit.receipt) : undefined,
+      },
+    };
   }
   return null;
 }
@@ -131,11 +203,26 @@ export default function ChatMessage({
   text,
   toolCalls = [],
   isLoading = false,
+  customer,
+  sessionId,
+  onAuthoriseDone,
 }: ChatMessageProps) {
   const isUser = role === "user";
   const products = extractProducts(toolCalls);
   const cart = extractCart(toolCalls);
   const payment = extractPaymentInfo(toolCalls);
+  const handoff = extractAuthoriseHandoff(toolCalls);
+  const [authorised, setAuthorised] = useState(false);
+
+  const handleAuthoriseDone = useCallback(
+    (result: AuthoriseResult) => {
+      setAuthorised(true);
+      if (result.kind === "success" && onAuthoriseDone) {
+        onAuthoriseDone({ ...result, amountPaise: handoff?.amountPaise });
+      }
+    },
+    [onAuthoriseDone, handoff]
+  );
 
   return (
     <div
@@ -143,10 +230,8 @@ export default function ChatMessage({
     >
       {/* Avatar */}
       <div
-        className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-sm ${
-          isUser
-            ? "bg-indigo-600 text-white"
-            : "bg-gradient-to-br from-emerald-500 to-teal-600 text-white"
+        className={`flex h-8 w-8 shrink-0 items-center justify-center border-[3px] border-[#000000] text-sm font-black shadow-[2px_2px_0px_#000000] ${
+          isUser ? "bg-[#FF5500] text-[#000000]" : "bg-[#000000] text-[#F4F4F0]"
         }`}
       >
         {isUser ? "U" : "🤖"}
@@ -161,17 +246,17 @@ export default function ChatMessage({
         {/* Text content */}
         {(text || isLoading) && (
           <div
-            className={`rounded-2xl px-4 py-2.5 text-sm leading-relaxed ${
+            className={`border-[3px] border-[#000000] px-4 py-2.5 text-sm font-medium leading-relaxed text-[#000000] ${
               isUser
-                ? "rounded-tr-md bg-indigo-600 text-white"
-                : "rounded-tl-md bg-zinc-800/80 text-zinc-100"
+                ? "bg-[#CCFF00] shadow-[4px_4px_0px_#000000]"
+                : "bg-[#FFFFFF] shadow-[4px_4px_0px_#000000]"
             }`}
           >
             {isLoading ? (
-              <div className="flex items-center gap-1.5">
-                <span className="h-2 w-2 animate-bounce rounded-full bg-zinc-400" style={{ animationDelay: "0ms" }} />
-                <span className="h-2 w-2 animate-bounce rounded-full bg-zinc-400" style={{ animationDelay: "150ms" }} />
-                <span className="h-2 w-2 animate-bounce rounded-full bg-zinc-400" style={{ animationDelay: "300ms" }} />
+              <div className="flex items-center gap-1.5 py-0.5">
+                <span className="thinking-dot h-2.5 w-2.5 rounded-full bg-[#FF0055]" style={{ animationDelay: "0ms" }} />
+                <span className="thinking-dot h-2.5 w-2.5 rounded-full bg-[#FF0055]" style={{ animationDelay: "150ms" }} />
+                <span className="thinking-dot h-2.5 w-2.5 rounded-full bg-[#FF0055]" style={{ animationDelay: "300ms" }} />
               </div>
             ) : (
               <div className="whitespace-pre-wrap">{text}</div>
@@ -181,29 +266,30 @@ export default function ChatMessage({
 
         {/* Product cards */}
         {products.length > 0 && (
-          <div className="flex flex-wrap gap-2">
-            {products.map((p) => (
+          <div className="flex flex-wrap gap-3">
+            {products.map((p, i) => (
               <div
                 key={p.id}
-                className="w-56 overflow-hidden rounded-xl border border-zinc-700/50 bg-zinc-900/80"
+                className="animate-fade-up w-56 border-[3px] border-[#000000] bg-[#FFFFFF] shadow-[4px_4px_0px_#000000]"
+                style={{ animationDelay: `${i * 60}ms` }}
               >
                 <img
                   src={p.image_url}
                   alt={p.name}
-                  className="h-28 w-full object-cover"
+                  className="h-28 w-full border-b-[3px] border-[#000000] object-cover"
                 />
                 <div className="p-3">
-                  <h4 className="text-sm font-semibold text-zinc-100 truncate">
+                  <h4 className="truncate text-sm font-black uppercase tracking-tight text-[#000000]">
                     {p.name}
                   </h4>
-                  <p className="mt-0.5 text-xs text-zinc-400 line-clamp-2">
+                  <p className="mt-0.5 line-clamp-2 text-xs text-[#000000]/70">
                     {p.description}
                   </p>
                   <div className="mt-2 flex items-center justify-between">
-                    <span className="text-sm font-bold text-zinc-100">
+                    <span className="border-2 border-[#000000] bg-[#F4F4F0] px-1.5 py-0.5 text-sm font-black text-[#000000]">
                       {formatPaise(p.price_paise)}
                     </span>
-                    <span className="text-xs text-zinc-500">
+                    <span className="text-xs font-bold text-[#000000]/60">
                       {p.stock > 0 ? `${p.stock} left` : "Out of stock"}
                     </span>
                   </div>
@@ -215,24 +301,26 @@ export default function ChatMessage({
 
         {/* Cart summary */}
         {cart && cart.items.length > 0 && (
-          <div className="w-full max-w-sm rounded-xl border border-zinc-700/50 bg-zinc-900/80 p-3">
-            <h4 className="flex items-center gap-2 text-sm font-semibold text-zinc-100">
+          <div className="animate-fade-up w-full max-w-sm border-[3px] border-[#000000] bg-[#FFFFFF] p-3 shadow-[4px_4px_0px_#000000]">
+            <h4 className="flex items-center gap-2 border-b-2 border-[#000000] pb-1.5 text-sm font-black uppercase tracking-tight text-[#000000]">
               🛒 Cart
             </h4>
             <div className="mt-2 flex flex-col gap-1">
               {cart.items.map((item, i) => (
                 <div key={i} className="flex items-center justify-between text-xs">
-                  <span className="text-zinc-300">
+                  <span className="font-medium text-[#000000]/80">
                     {item.quantity}x {item.name}
                   </span>
-                  <span className="text-zinc-400">
+                  <span className="font-bold text-[#000000]/70">
                     {formatPaise(item.subtotal_paise)}
                   </span>
                 </div>
               ))}
-              <div className="mt-1 flex items-center justify-between border-t border-zinc-800 pt-1 text-sm font-semibold">
-                <span className="text-zinc-200">Total</span>
-                <span className="text-zinc-100">{cart.total_display}</span>
+              <div className="mt-1 flex items-center justify-between border-t-2 border-[#000000] pt-1.5 text-sm font-black">
+                <span className="uppercase text-[#000000]">Total</span>
+                <span className="bg-[#000000] px-1.5 py-0.5 text-[#F4F4F0]">
+                  {cart.total_display}
+                </span>
               </div>
             </div>
           </div>
@@ -243,9 +331,22 @@ export default function ChatMessage({
           <div className="w-full max-w-sm">
             <PaymentStatus
               status={payment.status}
-              orderId={payment.orderId}
+              orderId={payment.orderId ? String(payment.orderId) : payment.rzpOrderId}
               amount={payment.amount}
               errorMessage={payment.errorMessage}
+            />
+          </div>
+        )}
+
+        {/* Authorisation handoff card */}
+        {handoff && customer && !authorised && (
+          <div className="w-full max-w-sm">
+            <AuthoriseCard
+              customer={customer}
+              auth={handoff.auth}
+              pendingDebit={handoff.pendingDebit}
+              sessionId={sessionId}
+              onDone={handleAuthoriseDone}
             />
           </div>
         )}

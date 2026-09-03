@@ -1,8 +1,8 @@
 import { NextResponse } from "next/server";
-import Razorpay from "razorpay";
-import type { Orders } from "razorpay/dist/types/orders";
-import { getAllProducts, insertOrder } from "@/lib/db";
+import { getAllProducts } from "@/lib/db";
 import type { CartItem } from "@/lib/types";
+import { logServer } from "@/lib/agent/server-log";
+import { executePayment } from "@/lib/payments";
 
 export const runtime = "nodejs";
 
@@ -13,17 +13,33 @@ interface CheckoutItem {
   qty: number | string;
 }
 
+interface CustomerBody {
+  name?: string;
+  contact?: string;
+  email?: string | null;
+}
+
+/** Normalise a 10-digit Indian mobile number (strips +91 / spaces / dashes). */
+function normaliseContact(raw: string): string | null {
+  const digits = raw.replace(/[^\d]/g, "");
+  if (digits.length === 12 && digits.startsWith("91")) return digits.slice(2);
+  if (digits.length === 11 && digits.startsWith("0")) return digits.slice(1);
+  return digits.length === 10 ? digits : null;
+}
+
 /**
  * POST /api/checkout
- * Body: { items: [{ productId, qty }] }
+ * Body: { items: [{ productId, qty }], customer: { name, contact, email? } }
  *
- * Validates stock and computes the total server-side (client prices are never
- * trusted). Rejects orders above SPEND_CAP_PAISE with a structured JSON error,
- * creates a Razorpay order for Standard Checkout and records the order as
- * "created". Returns { orderId, razorpayOrderId, amount, currency, keyId }.
+ * Validates stock + prices server-side (client prices are never trusted),
+ * enforces SPEND_CAP_PAISE and the ₹10,000 Reserve Pay block ceiling, then runs
+ * the UPI Reserve Pay decision:
+ *   - reusable mandate → debits immediately → { status: "paid", orderId, ... }
+ *   - no mandate       → creates the authorisation order →
+ *                       { status: "needs_authorisation", auth: {...} }
  */
 export async function POST(req: Request) {
-  let body: { items?: CheckoutItem[] };
+  let body: { items?: CheckoutItem[]; customer?: CustomerBody };
   try {
     body = await req.json();
   } catch {
@@ -36,6 +52,26 @@ export async function POST(req: Request) {
       { status: 400 }
     );
   }
+
+  const rawCustomer = body.customer ?? {};
+  const name = String(rawCustomer.name ?? "").trim();
+  const rawContact = String(rawCustomer.contact ?? "").trim();
+  const contact = normaliseContact(rawContact);
+  if (!name || name.length < 2) {
+    return NextResponse.json(
+      { error: "Please provide your name to check out." },
+      { status: 400 }
+    );
+  }
+  if (!contact) {
+    return NextResponse.json(
+      {
+        error: `Please provide a valid 10-digit Indian mobile number (got "${rawContact || "(empty)"}").`,
+      },
+      { status: 400 }
+    );
+  }
+  const email = rawCustomer.email ? String(rawCustomer.email).trim() : null;
 
   // Normalise and validate the incoming items.
   const requested: CartItem[] = [];
@@ -88,9 +124,10 @@ export async function POST(req: Request) {
 
   // Spend-cap guard: graceful, structured rejection, not a crash.
   if (totalPaise > SPEND_CAP_PAISE) {
-    console.warn(
-      `[checkout] rejected: order ₹${(totalPaise / 100).toFixed(2)} exceeds spend cap ₹${(SPEND_CAP_PAISE / 100).toFixed(2)}`
-    );
+    logServer("checkout", "Order rejected — exceeds spend cap", {
+      level: "warn",
+      detail: { total_paise: totalPaise, spend_cap_paise: SPEND_CAP_PAISE, items: requested },
+    });
     return NextResponse.json(
       {
         error: `Order total ₹${(totalPaise / 100).toFixed(2)} exceeds the spend cap of ₹${(SPEND_CAP_PAISE / 100).toFixed(2)} (SPEND_CAP_PAISE). Remove some items or split the order.`,
@@ -102,71 +139,65 @@ export async function POST(req: Request) {
     );
   }
 
-  if (!process.env.RAZORPAY_KEY_ID || !process.env.RAZORPAY_KEY_SECRET) {
-    return NextResponse.json(
-      {
-        error: "Razorpay is not configured — set RAZORPAY_KEY_ID and RAZORPAY_KEY_SECRET in .env.local.",
-      },
-      { status: 500 }
-    );
-  }
-
-  const razorpay = new Razorpay({
-    key_id: process.env.RAZORPAY_KEY_ID,
-    key_secret: process.env.RAZORPAY_KEY_SECRET,
-  });
-
-  let order;
   try {
-    const createParams: Orders.RazorpayOrderCreateRequestBody = {
+    const resolution = await executePayment({
+      name,
+      contact,
+      email,
+      amountPaise: totalPaise,
+      items,
+      orderKind: "charge",
+      description: `AgentStore order — ${items.map((i) => `${byId.get(i.productId)?.name ?? `#${i.productId}`} x${i.qty}`).join(", ")}`,
+    });
+
+    if (resolution.status === "needs_authorisation") {
+      const { payload } = resolution;
+      logServer("checkout", `Authorisation required for ₹${(totalPaise / 100).toFixed(2)}`, {
+        detail: { order_id: payload.orderId, customer_id: payload.customerId, block_paise: payload.blockPaise },
+      });
+      return NextResponse.json({
+        status: "needs_authorisation",
+        auth: {
+          orderId: payload.orderId,
+          customerId: payload.customerId,
+          keyId: payload.keyId,
+          blockPaise: payload.blockPaise,
+          expireAt: payload.expireAt,
+          amountPaise: payload.amountPaise,
+        },
+      });
+    }
+
+    if (resolution.status === "error") {
+      return NextResponse.json(
+        { error: resolution.error, code: resolution.code ?? "PAYMENT_FAILED" },
+        { status: 502 }
+      );
+    }
+
+    const { debit } = resolution;
+    logServer("checkout", `Debit captured → local order #${debit.localOrderId}`, {
+      detail: {
+        local_order_id: debit.localOrderId,
+        rzp_order_id: debit.rzpOrderId,
+        payment_id: debit.paymentId ?? null,
+        amount_paise: debit.amountPaise,
+      },
+    });
+    return NextResponse.json({
+      status: "paid",
+      orderId: debit.localOrderId,
+      rzpOrderId: debit.rzpOrderId,
+      paymentId: debit.paymentId ?? null,
       amount: totalPaise,
       currency: "INR",
-      receipt: `order-${Date.now()}`,
-      notes: {
-        items: JSON.stringify(items),
-      },
-    };
-    order = await razorpay.orders.create(createParams);
+    });
   } catch (err) {
-    // Razorpay SDK errors carry statusCode + { error: { description, code } }.
-    // Surface those so the real cause isn't swallowed as "Unknown error".
-    const e = err as {
-      statusCode?: number;
-      error?: { description?: string; code?: string };
-      message?: string;
-    };
-    const detail = e.error?.description ?? e.message ?? "Unknown Razorpay error";
-    console.error(
-      `[checkout] order creation failed for ₹${(totalPaise / 100).toFixed(2)}`,
-      { statusCode: e.statusCode ?? null, code: e.error?.code ?? null, detail }
-    );
+    const message = err instanceof Error ? err.message : "Payment could not be completed.";
+    logServer("checkout", "Checkout FAILED", { level: "error", detail: { error: message } });
     return NextResponse.json(
-      {
-        error: `Failed to create order: ${detail}`,
-        code: "CHECKOUT_REJECTED",
-        ...(e.statusCode ? { statusCode: e.statusCode } : {}),
-        ...(e.error?.code ? { razorpayCode: e.error.code } : {}),
-      },
+      { error: message, code: "CHECKOUT_REJECTED" },
       { status: 502 }
     );
   }
-
-  // Record the order as "created". The Razorpay order id is stored in
-  // razorpay_payment_link_id (the column is just an opaque reference string);
-  // it's how payment status is reconciled, whether via the in-page checkout
-  // handler or the payment_link.paid webhook.
-  const orderId = insertOrder({
-    razorpay_payment_link_id: order.id,
-    status: "created",
-    amount_paise: totalPaise,
-    items,
-  });
-
-  return NextResponse.json({
-    orderId,
-    razorpayOrderId: order.id,
-    amount: order.amount,
-    currency: order.currency,
-    keyId: process.env.RAZORPAY_KEY_ID,
-  });
 }

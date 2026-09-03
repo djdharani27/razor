@@ -1,11 +1,11 @@
 // POST /api/agent/chat — Core agent endpoint.
-// Accepts { message, sessionId? } and returns the agent's response.
+// Accepts { message, sessionId?, customer? } and returns the agent's response.
 // Uses Gemini with function calling to process the message,
-// executing tools server-side (product search, cart, SBMD payments).
+// executing tools server-side (product search, cart, UPI Reserve Pay).
 
 import { NextResponse } from "next/server";
 import { processAgentMessage } from "@/lib/agent/gemini";
-import { getOrCreateSession } from "@/lib/agent/session";
+import { getOrCreateSession, setCustomer } from "@/lib/agent/session";
 
 function generateSessionId(): string {
   return `agent-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
@@ -14,9 +14,10 @@ function generateSessionId(): string {
 export async function POST(request: Request) {
   try {
     const body = await request.json();
-    const { message, sessionId: rawSessionId } = body as {
+    const { message, sessionId: rawSessionId, customer } = body as {
       message?: string;
       sessionId?: string;
+      customer?: { name?: string; contact?: string; email?: string | null } | null;
     };
 
     if (!message || typeof message !== "string" || !message.trim()) {
@@ -35,8 +36,18 @@ export async function POST(request: Request) {
     }
 
     const sessionId = rawSessionId || generateSessionId();
-    // Ensure session exists
-    getOrCreateSession(sessionId);
+    const session = getOrCreateSession(sessionId);
+
+    // Seed the session with the locally-saved profile (sent from the client)
+    // so a returning customer's identity is available to the payment tools
+    // without re-asking.
+    if (customer?.name && customer?.contact) {
+      setCustomer(sessionId, {
+        name: String(customer.name).trim(),
+        contact: String(customer.contact).replace(/[^\d]/g, "").slice(-10),
+        email: customer.email ? String(customer.email).trim() : null,
+      });
+    }
 
     const result = await processAgentMessage(sessionId, message.trim());
 

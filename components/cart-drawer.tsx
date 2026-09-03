@@ -2,6 +2,11 @@
 
 import { useCart } from "@/components/cart-context";
 import type { Product } from "@/lib/types";
+import {
+  CustomerProfileForm,
+  type CustomerProfile,
+} from "@/components/customer-profile";
+import AuthoriseButton from "@/components/rzp-authorise-button";
 
 const inr = new Intl.NumberFormat("en-IN", { style: "currency", currency: "INR" });
 
@@ -14,8 +19,21 @@ interface CartDrawerProps {
   onClose: () => void;
   products: Product[];
   onCheckout: () => void;
-  checkoutState: "idle" | "loading" | "error";
+  checkoutState: "idle" | "loading" | "error" | "authorising" | "paid";
   checkoutError: string | null;
+  /** When set, show the inline profile form (first checkout). */
+  pendingCustomer: CustomerProfile | null;
+  /** When set (with pendingCustomer), show the "approve your block" button. */
+  authRef: {
+    orderId: string;
+    customerId: string;
+    keyId: string;
+    blockPaise: number;
+    expireAt: number;
+    amountPaise: number;
+  } | null;
+  onProfileSave: (profile: CustomerProfile) => void;
+  onAuthorised: () => void;
 }
 
 export default function CartDrawer({
@@ -25,6 +43,10 @@ export default function CartDrawer({
   onCheckout,
   checkoutState,
   checkoutError,
+  pendingCustomer,
+  authRef,
+  onProfileSave,
+  onAuthorised,
 }: CartDrawerProps) {
   const { items, remove, totalQty } = useCart();
   const byId = new Map(products.map((p) => [p.id, p]));
@@ -32,6 +54,16 @@ export default function CartDrawer({
     const p = byId.get(i.productId);
     return sum + (p ? p.price_paise * i.qty : 0);
   }, 0);
+
+  const needsProfile = checkoutState === "authorising" && !!pendingCustomer && !authRef;
+  const needsAuthorisation = checkoutState === "authorising" && !!pendingCustomer && !!authRef;
+
+  const btnLabel =
+    checkoutState === "loading"
+      ? "Processing payment…"
+      : needsAuthorisation
+        ? "Awaiting UPI authorisation"
+        : "Checkout with UPI Reserve Pay";
 
   return (
     <div
@@ -78,37 +110,70 @@ export default function CartDrawer({
               Your cart is empty. Ask the agent to add something, or browse below.
             </p>
           ) : (
-            <ul className="space-y-4">
-              {items.map((item) => {
-                const product = byId.get(item.productId);
-                if (!product) return null;
-                return (
-                  <li key={item.productId} className="flex items-center gap-4">
-                    <img
-                      src={product.image_url}
-                      alt={product.name}
-                      className="h-14 w-14 rounded-lg object-cover"
-                    />
-                    <div className="min-w-0 flex-1">
-                      <p className="truncate text-sm font-medium text-zinc-100">{product.name}</p>
-                      <p className="text-xs text-zinc-400">
-                        {formatPaise(product.price_paise)} × {item.qty}
+            <>
+              <ul className="space-y-4">
+                {items.map((item) => {
+                  const product = byId.get(item.productId);
+                  if (!product) return null;
+                  return (
+                    <li key={item.productId} className="flex items-center gap-4">
+                      <img
+                        src={product.image_url}
+                        alt={product.name}
+                        className="h-14 w-14 rounded-lg object-cover"
+                      />
+                      <div className="min-w-0 flex-1">
+                        <p className="truncate text-sm font-medium text-zinc-100">{product.name}</p>
+                        <p className="text-xs text-zinc-400">
+                          {formatPaise(product.price_paise)} × {item.qty}
+                        </p>
+                      </div>
+                      <p className="text-sm font-semibold text-zinc-100">
+                        {formatPaise(product.price_paise * item.qty)}
                       </p>
-                    </div>
-                    <p className="text-sm font-semibold text-zinc-100">
-                      {formatPaise(product.price_paise * item.qty)}
+                      <button
+                        type="button"
+                        onClick={() => remove(item.productId)}
+                        className="rounded-md px-2 py-1 text-xs text-zinc-400 transition hover:bg-zinc-800 hover:text-red-400"
+                      >
+                        Remove
+                      </button>
+                    </li>
+                  );
+                })}
+              </ul>
+
+              {/* First-checkout profile step */}
+              {needsProfile && (
+                <div className="mt-5 border-t border-zinc-800 pt-4">
+                  <CustomerProfileForm
+                    compact
+                    onSave={onProfileSave}
+                  />
+                </div>
+              )}
+
+              {/* Authorisation step */}
+              {needsAuthorisation && authRef && (
+                <div className="mt-5 border-t border-zinc-800 pt-4">
+                  <div className="mb-3 rounded-lg border border-indigo-900/60 bg-indigo-950/30 px-3 py-2">
+                    <p className="text-xs text-zinc-300">
+                      <span className="font-medium text-indigo-300">One more step:</span> approve a
+                      UPI block so your future payments don&apos;t need a PIN. This takes a few
+                      seconds in your UPI app.
                     </p>
-                    <button
-                      type="button"
-                      onClick={() => remove(item.productId)}
-                      className="rounded-md px-2 py-1 text-xs text-zinc-400 transition hover:bg-zinc-800 hover:text-red-400"
-                    >
-                      Remove
-                    </button>
-                  </li>
-                );
-              })}
-            </ul>
+                  </div>
+                  <AuthoriseButton
+                    customer={pendingCustomer}
+                    auth={authRef}
+                    onResult={(result) => {
+                      if (result.kind === "success") onAuthorised();
+                      // dismissed / failed: keep showing the button so the user can retry.
+                    }}
+                  />
+                </div>
+              )}
+            </>
           )}
         </div>
 
@@ -126,14 +191,14 @@ export default function CartDrawer({
 
           <button
             type="button"
-            disabled={items.length === 0 || checkoutState === "loading"}
+            disabled={items.length === 0 || checkoutState === "loading" || needsAuthorisation}
             onClick={onCheckout}
             className="w-full rounded-lg bg-indigo-600 px-4 py-3 text-sm font-semibold text-white transition hover:bg-indigo-500 disabled:cursor-not-allowed disabled:opacity-50"
           >
-            {checkoutState === "loading" ? "Creating payment link…" : "Checkout with Razorpay"}
+            {btnLabel}
           </button>
           <p className="mt-2 text-center text-[11px] text-zinc-500">
-            Test mode — use card 4111 1111 1111 1111, any future expiry &amp; CVV.
+            Test mode — approve with the sandbox UPI app / test UPI ID.
           </p>
         </footer>
       </aside>

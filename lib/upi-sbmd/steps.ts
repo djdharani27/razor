@@ -3,8 +3,13 @@
 //   Group 1 (authorisation): 1.1 customer, 1.2 order, 1.3 checkout (no API).
 //   Group 2 (fetch token):   2.1 payment → token_id.
 //   Group 3 (charge):        3.1 charge order, 3.2 one-time recurring payment.
-// Steps 1.1–1.2 and 3.x mirror the API payloads in PLAN.md / the Reserve Pay
-// docs. Each subsequent step auto-wires the ids it needs from earlier outputs.
+//
+// NO fake/hardcoded Razorpay data lives here. defaultBody only holds the
+// fields a step needs that have no real value yet — placeholders are left
+// empty and the harness refuses to run a step until every required id comes
+// from a previous step's REAL API response (or a deliberate manual paste).
+// Every id that Razorpay returns (customer_id, order_id, payment_id, token_id)
+// is read only from an earlier API response.
 
 export type StepId =
   | "createCustomer"
@@ -30,12 +35,6 @@ export interface StepDef {
 // Per the docs this actually signals a successful registration, not a failure.
 export const UPI_DUMMY_PAYMENT_REASON = "upi_dummy_payment";
 
-// Exact description Razorpay returns when a debit is attempted before the
-// 25-hour pre-debit notification window has elapsed. The SBMD harness treats
-// this as a "scheduled" outcome rather than a failure.
-export const PRE_DEBIT_HOLD_MESSAGE =
-  "Payment can only be attempted 25 hours after the notification is delivered";
-
 export const STEPS: StepDef[] = [
   {
     id: "createCustomer",
@@ -43,17 +42,12 @@ export const STEPS: StepDef[] = [
     title: "Create a Customer",
     endpoint: "/v1/customers",
     method: "POST",
-    hint: "Returns a customer_id used by the next two steps.",
+    hint: "Returns a real customer_id used by the next steps. Fill in a real name / 10-digit contact. fail_existing \"0\" reuses an existing customer for the same contact instead of duplicating.",
     defaultBody: JSON.stringify(
       {
-        name: "John Smith",
-        email: "john.smith@example.com",
-        contact: "+11234567890",
+        name: "",
+        contact: "",
         fail_existing: "0",
-        notes: {
-          note_key_1: "September",
-          note_key_2: "Make it so.",
-        },
       },
       null,
       2
@@ -65,24 +59,20 @@ export const STEPS: StepDef[] = [
     title: "Create an Order (Authorisation / Mandate)",
     endpoint: "/v1/orders",
     method: "POST",
-    hint: "Amount limits: block ≤ ₹10,000, token.max_amount ≤ ₹10,000, token.expire_at ≤ 90 days from now.",
+    hint: "Authorises the UPI Reserve Pay block. customer_id is auto-filled from the real step 1.1 response. Amount limits: block ≤ ₹10,000, token.max_amount ≤ ₹10,000, token.expire_at ≤ 90 days from now.",
     defaultBody: JSON.stringify(
       {
         amount: 100,
         currency: "INR",
-        customer_id: "cust_4xbQrmEoA5WJ01",
+        customer_id: "",
         method: "upi",
         token: {
-          max_amount: 200000,
-          expire_at: 2709971120,
+          max_amount: 100000,
+          expire_at: 0,
           frequency: "as_presented",
           type: "single_block_multiple_debit",
         },
-        receipt: "Receipt No. 1",
-        notes: {
-          note_key_1: "September",
-          note_key_2: "Make it so.",
-        },
+        notes: {},
       },
       null,
       2
@@ -95,7 +85,7 @@ export const STEPS: StepDef[] = [
     endpoint: "https://checkout.razorpay.com/v1/checkout.js",
     method: "JS",
     integration: "checkout",
-    hint: "No API call. Opens the Razorpay Checkout with the order_id from step 1.2 and customer_id from step 1.1 (recurring: true). The customer approves the UPI block here — that registers the SBMD mandate.",
+    hint: "No API call. Opens the Razorpay Checkout with the real order_id from step 1.2 and customer_id from step 1.1 (recurring: true). The customer approves the UPI block here — that registers the SBMD mandate.",
     defaultBody: JSON.stringify(
       {
         recurring: true,
@@ -111,14 +101,8 @@ export const STEPS: StepDef[] = [
     title: "Fetch Token from Payment ID",
     endpoint: "/v1/payments/:id",
     method: "GET",
-    hint: "Fetch the authorisation payment to get its token_id. Runs standalone — paste a razorpay_payment_id into the input below, or it auto-picks the payment id from the step 1.3 checkout result. Response includes token_id, vpa, customer_id, amount, status, and more.",
-    defaultBody: JSON.stringify(
-      {
-        id: "pay_TXE6GlS2AsCOBH",
-      },
-      null,
-      2
-    ),
+    hint: "Fetch the authorisation payment to get its token_id. Runs standalone — paste a real razorpay_payment_id into the input below, or it auto-picks the payment id from the real step 1.3 checkout result. Response includes token_id, vpa, customer_id, amount, status, and more.",
+    defaultBody: JSON.stringify({ id: "" }, null, 2),
   },
   {
     id: "createChargeOrder",
@@ -126,20 +110,12 @@ export const STEPS: StepDef[] = [
     title: "Create an Order to Charge the Customer",
     endpoint: "/v1/orders",
     method: "POST",
-    hint: "A new order — distinct from the step 1.2 authorisation order — created for each charge. The notification.token_id (from step 2.1) triggers the pre-debit notification. Amount must not exceed the blocked amount from step 1.2.",
+    hint: "A new order — distinct from the step 1.2 authorisation order — created for each charge. No notification object is sent, so the step 3.2 debit can execute immediately (no 25-hour pre-debit hold). Amount must not exceed the blocked amount from step 1.2.",
     defaultBody: JSON.stringify(
       {
         amount: 100,
         currency: "INR",
-        payment_capture: true,
-        receipt: "Receipt No. 2",
-        notification: {
-          token_id: "token_TXE6GucHxg9rcx",
-        },
-        notes: {
-          note_key_1: "September",
-          note_key_2: "Make it so.",
-        },
+        notes: {},
       },
       null,
       2
@@ -151,22 +127,18 @@ export const STEPS: StepDef[] = [
     title: "Create a One Time Payment",
     endpoint: "/v1/payments/create/recurring",
     method: "POST",
-    hint: "Charges the customer against the step 3.1 order using the step 2.1 token. Auto-wires order_id, customer_id, token, email and contact from the earlier outputs; amount must match the step 3.1 order.",
+    hint: "Charges the customer against the real step 3.1 order using the real step 2.1 token. Auto-wires order_id, customer_id, token, email and contact from the earlier API outputs; amount must match the step 3.1 order.",
     defaultBody: JSON.stringify(
       {
-        email: "john.smith@example.com",
-        contact: "+11234567890",
+        email: "",
+        contact: "",
         amount: 100,
         currency: "INR",
-        order_id: "order_TXE5V2cP08ANnw",
-        customer_id: "cust_TXA9fF1bBAjSif",
-        token: "token_TXE6GucHxg9rcx",
+        order_id: "",
+        customer_id: "",
+        token: "",
         recurring: true,
-        description: "Creating recurring payment for John Smith",
-        notes: {
-          note_key_1: "September",
-          note_key_2: "Make it so.",
-        },
+        notes: {},
       },
       null,
       2

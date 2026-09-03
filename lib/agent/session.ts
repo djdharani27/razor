@@ -1,20 +1,36 @@
 // In-memory session store for the AI agent. Tracks conversation history,
-// cart state, and SBMD payment state per session. Adequate for a hackathon
-// demo; swap for Redis/DB in production.
+// cart state, the customer identity, and the payment state per session.
+// Adequate for a hackathon demo; swap for Redis/DB in production.
 
 import type { CartItem } from "@/lib/types";
 
+export interface SessionCustomer {
+  name: string;
+  contact: string; // 10-digit mobile
+  email?: string | null;
+  rzpCustomerId?: string | null;
+}
+
 export interface PaymentState {
-  /** The charge order_id from step 3.1 */
+  /** Status of the current payment flow. */
+  status:
+    | "idle"
+    | "needs_authorisation"
+    | "debit_created"
+    | "captured"
+    | "failed";
+  /** Authorisation order (step 1.2) awaiting customer approval in the modal. */
+  authOrderId: string | null;
+  /** Charge order id (step 3.1) for the in-flight debit. */
   chargeOrderId: string | null;
-  /** Status of the current charge flow */
-  status: "idle" | "order_created" | "payment_pending" | "payment_scheduled" | "payment_captured" | "error";
-  /** Error message if status is "error" */
-  errorMessage: string | null;
-  /** Amount in paise */
+  /** Local order id of the most recent captured order. */
+  lastOrderId: number | null;
+  /** Amount in paise being processed. */
   amountPaise: number;
-  /** Receipt counter */
+  /** Receipt counter for charge orders. */
   receiptNo: number;
+  /** Error message if status is "error"/"failed". */
+  errorMessage: string | null;
 }
 
 export interface ChatMessage {
@@ -29,6 +45,7 @@ export interface AgentSession {
   cart: CartItem[];
   messages: ChatMessage[];
   payment: PaymentState;
+  customer: SessionCustomer | null;
   createdAt: number;
 }
 
@@ -36,11 +53,13 @@ const sessions = new Map<string, AgentSession>();
 
 function freshPayment(): PaymentState {
   return {
-    chargeOrderId: null,
     status: "idle",
-    errorMessage: null,
+    authOrderId: null,
+    chargeOrderId: null,
+    lastOrderId: null,
     amountPaise: 0,
     receiptNo: 1,
+    errorMessage: null,
   };
 }
 
@@ -52,6 +71,7 @@ export function getOrCreateSession(sessionId: string): AgentSession {
       cart: [],
       messages: [],
       payment: freshPayment(),
+      customer: null,
       createdAt: Date.now(),
     };
     sessions.set(sessionId, session);
@@ -78,6 +98,20 @@ export function setCart(sessionId: string, cart: CartItem[]): void {
 
 export function getCart(sessionId: string): CartItem[] {
   return getOrCreateSession(sessionId).cart;
+}
+
+export function setCustomer(sessionId: string, customer: SessionCustomer): void {
+  const session = getOrCreateSession(sessionId);
+  session.customer = {
+    name: customer.name,
+    contact: customer.contact,
+    email: customer.email ?? null,
+    rzpCustomerId: customer.rzpCustomerId ?? null,
+  };
+}
+
+export function getCustomer(sessionId: string): SessionCustomer | null {
+  return getOrCreateSession(sessionId).customer;
 }
 
 export function updatePayment(sessionId: string, patch: Partial<PaymentState>): void {
