@@ -88,7 +88,13 @@ export async function POST(req: Request) {
   return NextResponse.json({
     ok: true,
     mandate: reusable
-      ? { reusable: true, blockPaise, remainingPaise, mandateId: local?.id ?? null }
+      ? {
+          reusable: true,
+          blockPaise,
+          remainingPaise,
+          mandateId: local?.id ?? null,
+          agentCode: local?.agent_code ?? null,
+        }
       : { reusable: false },
     customerKnown: true,
   });

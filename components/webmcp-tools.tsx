@@ -236,8 +236,17 @@ export default function WebMCPTools() {
         id: "checkout",
         name: "checkout",
         description:
-          "Complete purchase of everything in the cart via UPI Reserve Pay. Requires the customer's saved name + 10-digit mobile (saved locally when they first check out). This is a money-spending action and requires the current cart to be non-empty.",
-        inputSchema: { type: "object", properties: {} },
+          "Complete purchase of everything in the cart via UPI Reserve Pay. Requires the 'agent_code' (e.g. 'RZP-8421') shown on the storefront after the user sets up their UPI Reserve Pay mandate.",
+        inputSchema: {
+          type: "object",
+          properties: {
+            agent_code: {
+              type: "string",
+              description:
+                "The Agent Delegation Code shown on the storefront banner (e.g. 'RZP-8421'). If omitted, the saved browser profile will be used as a fallback.",
+            },
+          },
+        },
         annotations: { readOnlyHint: false, untrustedContentHint: true },
         execute: (input) =>
           runTool("checkout", input, async () => {
@@ -245,20 +254,35 @@ export default function WebMCPTools() {
             if (cart.length === 0) {
               return { error: "Cart is empty — add items before checking out." };
             }
-            const customer = readSavedCustomer();
-            if (!customer) {
-              return {
-                error:
-                  "No saved customer profile. Ask the user for their name and 10-digit mobile number, then tell them to click \"Checkout\" in the cart so they can save it once — after that purchases go through instantly.",
+
+            const agentCode =
+              typeof input.agent_code === "string" ? input.agent_code.trim() : "";
+
+            let requestBody: Record<string, unknown>;
+
+            if (agentCode) {
+              requestBody = {
+                items: cart,
+                agent_code: agentCode,
+              };
+            } else {
+              const customer = readSavedCustomer();
+              if (!customer) {
+                return {
+                  error:
+                    "No agent_code provided and no saved customer profile found. Ask the user for their Agent Code (shown in the storefront banner, e.g. 'RZP-8421') or have them authorize a UPI Reserve Pay mandate on the page first.",
+                };
+              }
+              requestBody = {
+                items: cart,
+                customer: { name: customer.name, contact: customer.contact, email: customer.email ?? null },
               };
             }
+
             const res = await fetch("/api/checkout", {
               method: "POST",
               headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({
-                items: cart,
-                customer: { name: customer.name, contact: customer.contact, email: customer.email ?? null },
-              }),
+              body: JSON.stringify(requestBody),
               signal,
             });
             const data = (await res.json()) as {

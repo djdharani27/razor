@@ -40,6 +40,12 @@ function migrateOrders(db: Database.Database): void {
   add("mandate_id", "INTEGER");
 }
 
+function migrateMandates(db: Database.Database): void {
+  if (!columnExists(db, "mandates", "agent_code")) {
+    db.exec("ALTER TABLE mandates ADD COLUMN agent_code TEXT");
+  }
+}
+
 /** Init schema and run seed if the products table is empty. Called lazily. */
 export function initDb(): Database.Database {
   const db = getDb();
@@ -79,7 +85,8 @@ export function initDb(): Database.Database {
       max_amount_paise INTEGER NOT NULL,
       amount_debited_paise INTEGER NOT NULL DEFAULT 0,
       expire_at INTEGER NOT NULL,
-      created_at INTEGER NOT NULL
+      created_at INTEGER NOT NULL,
+      agent_code TEXT
     );
     CREATE TABLE IF NOT EXISTS agent_log (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -90,6 +97,7 @@ export function initDb(): Database.Database {
     );
   `);
   migrateOrders(db);
+  migrateMandates(db);
   const count = (db.prepare("SELECT COUNT(*) AS n FROM products").get() as { n: number }).n;
   if (count === 0) seedProducts(db);
   return db;
@@ -322,15 +330,79 @@ export function getMandatesForCustomer(customerId: number): MandateRow[] {
     .all(customerId) as MandateRow[];
 }
 
+export function generateAgentCode(): string {
+  const num = Math.floor(1000 + Math.random() * 9000);
+  return `RZP-${num}`;
+}
+
 /** Newest non-terminal mandate, or undefined when re-authorisation is needed. */
 export function getActiveMandate(customerId: number): MandateRow | undefined {
-  return initDb()
+  const db = initDb();
+  const mandate = db
     .prepare(
       `SELECT * FROM mandates
        WHERE customer_id = ? AND status = 'active' AND expire_at > ?
        ORDER BY id DESC LIMIT 1`
     )
     .get(customerId, Math.floor(Date.now() / 1000)) as MandateRow | undefined;
+
+  if (mandate && !mandate.agent_code) {
+    const code = generateAgentCode();
+    db.prepare("UPDATE mandates SET agent_code = ? WHERE id = ?").run(code, mandate.id);
+    mandate.agent_code = code;
+  }
+  return mandate;
+}
+
+export function getMandateByAgentCode(
+  code: string
+): { mandate: MandateRow; customer: CustomerRow } | undefined {
+  const clean = code.trim().toUpperCase();
+  if (!clean) return undefined;
+  const db = initDb();
+  const row = db
+    .prepare(
+      `SELECT m.*, c.name AS customer_name, c.contact AS customer_contact, c.email AS customer_email, c.rzp_customer_id
+       FROM mandates m
+       JOIN customers c ON c.id = m.customer_id
+       WHERE UPPER(m.agent_code) = ? AND m.status = 'active' AND m.expire_at > ?
+       ORDER BY m.id DESC LIMIT 1`
+    )
+    .get(clean, Math.floor(Date.now() / 1000)) as
+    | (MandateRow & {
+        customer_name: string;
+        customer_contact: string;
+        customer_email: string | null;
+        rzp_customer_id: string | null;
+      })
+    | undefined;
+
+  if (!row) return undefined;
+
+  const customer: CustomerRow = {
+    id: row.customer_id,
+    contact: row.customer_contact,
+    name: row.customer_name,
+    email: row.customer_email,
+    rzp_customer_id: row.rzp_customer_id,
+    created_at: row.created_at,
+  };
+
+  const mandate: MandateRow = {
+    id: row.id,
+    customer_id: row.customer_id,
+    token_id: row.token_id,
+    auth_order_id: row.auth_order_id,
+    auth_payment_id: row.auth_payment_id,
+    status: row.status,
+    max_amount_paise: row.max_amount_paise,
+    amount_debited_paise: row.amount_debited_paise,
+    expire_at: row.expire_at,
+    created_at: row.created_at,
+    agent_code: row.agent_code,
+  };
+
+  return { mandate, customer };
 }
 
 export function insertMandate(input: {
@@ -340,17 +412,19 @@ export function insertMandate(input: {
   authPaymentId?: string | null;
   maxAmountPaise: number;
   expireAt: number;
+  agentCode?: string | null;
 }): number {
   // Deactivate any prior active mandates — a fresh block supersedes them.
   const db = initDb();
   db.prepare("UPDATE mandates SET status = 'used' WHERE customer_id = ? AND status = 'active'")
     .run(input.customerId);
+  const agentCode = input.agentCode ?? generateAgentCode();
   const info = db
     .prepare(
       `INSERT INTO mandates
          (customer_id, token_id, auth_order_id, auth_payment_id, status,
-          max_amount_paise, amount_debited_paise, expire_at, created_at)
-       VALUES (?, ?, ?, ?, 'active', ?, 0, ?, ?)`
+          max_amount_paise, amount_debited_paise, expire_at, created_at, agent_code)
+       VALUES (?, ?, ?, ?, 'active', ?, 0, ?, ?, ?)`
     )
     .run(
       input.customerId,
@@ -359,7 +433,8 @@ export function insertMandate(input: {
       input.authPaymentId ?? null,
       input.maxAmountPaise,
       input.expireAt,
-      Date.now()
+      Date.now(),
+      agentCode
     );
   return Number(info.lastInsertRowid);
 }

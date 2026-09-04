@@ -22,10 +22,12 @@ import {
   debitMandate,
   expireStaleMandates,
   failOpenOrdersForMandate,
+  generateAgentCode,
   getActiveMandate,
   getCustomerByContact,
   getMandateById,
   getMandateByTokenId,
+  initDb,
   insertChargeOrder,
   insertMandate,
   mandateHasRoom,
@@ -146,17 +148,21 @@ export function persistMandate(input: {
   fallbackExpireAt: number;
   /** Route this mandate came from, e.g. "/api/rzp/authorise/confirm". */
   endpoint?: string;
-}): { mandateId: number; blockPaise: number; expireAt: number } {
+}): { mandateId: number; blockPaise: number; expireAt: number; agentCode: string } {
   const blockPaise = input.fallbackBlockPaise;
   const expireAt = input.fallbackExpireAt;
   const existing = getMandateByTokenId(input.tokenId);
   if (existing) {
+    if (!existing.agent_code) {
+      existing.agent_code = generateAgentCode();
+      initDb().prepare("UPDATE mandates SET agent_code = ? WHERE id = ?").run(existing.agent_code, existing.id);
+    }
     logServer("payment", `Mandate ${input.tokenId.slice(0, 8)}… already stored — keeping it`, {
       level: "warn",
       detail: { mandate_id: existing.id, customer_id: input.localCustomerId },
       ...(input.endpoint ? { endpoint: input.endpoint } : {}),
     });
-    return { mandateId: existing.id, blockPaise, expireAt };
+    return { mandateId: existing.id, blockPaise, expireAt, agentCode: existing.agent_code };
   }
   const mandateId = insertMandate({
     customerId: input.localCustomerId,
@@ -166,17 +172,20 @@ export function persistMandate(input: {
     maxAmountPaise: blockPaise,
     expireAt,
   });
-  logServer("payment", `Mandate stored (#${mandateId})`, {
+  const row = getMandateById(mandateId);
+  const agentCode = row?.agent_code ?? "";
+  logServer("payment", `Mandate stored (#${mandateId}, code: ${agentCode})`, {
     detail: {
       mandate_id: mandateId,
       customer_id: input.localCustomerId,
       token_id: `${input.tokenId.slice(0, 8)}…`,
       block_paise: blockPaise,
       expire_at: expireAt,
+      agent_code: agentCode,
     },
     ...(input.endpoint ? { endpoint: input.endpoint } : {}),
   });
-  return { mandateId, blockPaise, expireAt };
+  return { mandateId, blockPaise, expireAt, agentCode };
 }
 
 /** After the mandate is confirmed, run the debit that was waiting on it

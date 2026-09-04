@@ -61,6 +61,7 @@ export interface MandateRow {
   amount_debited_paise: number;
   expire_at: number;
   created_at: number;
+  agent_code?: string | null;
 }
 
 export interface AgentLogRow {

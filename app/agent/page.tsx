@@ -12,6 +12,7 @@ import {
   useSavedCustomer,
 } from "@/components/customer-profile";
 import type { AuthoriseResult } from "@/components/rzp-authorise-button";
+import AgentCodeBanner from "@/components/agent-code-banner";
 
 interface ToolCall {
   name: string;
@@ -228,6 +229,8 @@ export default function AgentPage() {
       {/* Messages area */}
       <div ref={scrollRef} className="flex-1 overflow-y-auto px-4 py-6">
         <div className="mx-auto flex max-w-3xl flex-col gap-4">
+          <AgentCodeBanner />
+
           {!customer && showProfileForm && (
             <div className="animate-pop-in mx-auto w-full max-w-sm">
               <CustomerProfileForm onSave={handleProfileSave} />

@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { getAllProducts } from "@/lib/db";
+import { getAllProducts, getMandateByAgentCode } from "@/lib/db";
 import type { CartItem } from "@/lib/types";
 import { logServer } from "@/lib/agent/server-log";
 import { executePayment } from "@/lib/payments";
@@ -29,17 +29,22 @@ function normaliseContact(raw: string): string | null {
 
 /**
  * POST /api/checkout
- * Body: { items: [{ productId, qty }], customer: { name, contact, email? } }
+ * Body: {
+ *   items: [{ productId, qty }],
+ *   customer?: { name, contact, email? },
+ *   agent_code?: string
+ * }
  *
  * Validates stock + prices server-side (client prices are never trusted),
  * enforces SPEND_CAP_PAISE and the ₹10,000 Reserve Pay block ceiling, then runs
  * the UPI Reserve Pay decision:
- *   - reusable mandate → debits immediately → { status: "paid", orderId, ... }
- *   - no mandate       → creates the authorisation order →
- *                       { status: "needs_authorisation", auth: {...} }
+ *   - agent_code provided → looks up authorized mandate → debits immediately
+ *   - reusable mandate    → debits immediately → { status: "paid", orderId, ... }
+ *   - no mandate          → creates the authorisation order →
+ *                           { status: "needs_authorisation", auth: {...} }
  */
 export async function POST(req: Request) {
-  let body: { items?: CheckoutItem[]; customer?: CustomerBody };
+  let body: { items?: CheckoutItem[]; customer?: CustomerBody; agent_code?: string };
   try {
     body = await req.json();
   } catch {
@@ -53,25 +58,48 @@ export async function POST(req: Request) {
     );
   }
 
-  const rawCustomer = body.customer ?? {};
-  const name = String(rawCustomer.name ?? "").trim();
-  const rawContact = String(rawCustomer.contact ?? "").trim();
-  const contact = normaliseContact(rawContact);
-  if (!name || name.length < 2) {
-    return NextResponse.json(
-      { error: "Please provide your name to check out." },
-      { status: 400 }
-    );
+  let name = "";
+  let contact: string | null = null;
+  let email: string | null = null;
+  let knownMandateId: number | undefined = undefined;
+
+  const rawAgentCode = typeof body.agent_code === "string" ? body.agent_code.trim() : "";
+  if (rawAgentCode) {
+    const resolved = getMandateByAgentCode(rawAgentCode);
+    if (!resolved) {
+      return NextResponse.json(
+        {
+          error: `Invalid, expired, or depleted Agent Code "${rawAgentCode}". Please authorize a UPI Reserve Pay mandate on the storefront to generate a valid Agent Code.`,
+          code: "INVALID_AGENT_CODE",
+        },
+        { status: 400 }
+      );
+    }
+    name = resolved.customer.name;
+    contact = resolved.customer.contact;
+    email = resolved.customer.email ?? null;
+    knownMandateId = resolved.mandate.id;
+  } else {
+    const rawCustomer = body.customer ?? {};
+    name = String(rawCustomer.name ?? "").trim();
+    const rawContact = String(rawCustomer.contact ?? "").trim();
+    contact = normaliseContact(rawContact);
+    if (!name || name.length < 2) {
+      return NextResponse.json(
+        { error: "Please provide your name to check out." },
+        { status: 400 }
+      );
+    }
+    if (!contact) {
+      return NextResponse.json(
+        {
+          error: `Please provide a valid 10-digit Indian mobile number (got "${rawContact || "(empty)"}").`,
+        },
+        { status: 400 }
+      );
+    }
+    email = rawCustomer.email ? String(rawCustomer.email).trim() : null;
   }
-  if (!contact) {
-    return NextResponse.json(
-      {
-        error: `Please provide a valid 10-digit Indian mobile number (got "${rawContact || "(empty)"}").`,
-      },
-      { status: 400 }
-    );
-  }
-  const email = rawCustomer.email ? String(rawCustomer.email).trim() : null;
 
   // Normalise and validate the incoming items.
   const requested: CartItem[] = [];
@@ -148,6 +176,7 @@ export async function POST(req: Request) {
       amountPaise: totalPaise,
       items,
       orderKind: "charge",
+      knownMandateId,
       description: `AgentStore order — ${items.map((i) => `${byId.get(i.productId)?.name ?? `#${i.productId}`} x${i.qty}`).join(", ")}`,
       endpoint: "/api/checkout",
     });
