@@ -6,7 +6,7 @@ import "./globals.css";
 const inter = Inter({ subsets: ["latin"] });
 
 export const metadata: Metadata = {
-  title: "AgentStore — Agentic Commerce Demo",
+  title: "Razorpay — Agentic Commerce Demo",
   description:
     "An AI-agent-friendly e-commerce demo. Browse products, add to cart and check out with Razorpay test payments — hands-free via the WebMCP agent tools.",
 };

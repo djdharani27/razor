@@ -44,15 +44,9 @@ export default function Storefront({ products: _products }: { products: Product[
       <div className="w-full max-w-xl">
         {/* Brand Header */}
         <div className="mb-6 text-center">
-          <div className="inline-flex items-center gap-2 border-[3px] border-[#000000] bg-[#CCFF00] px-3.5 py-1 text-xs font-black uppercase tracking-wider text-[#000000] shadow-[3px_3px_0px_#000000]">
-            <span>⚡ Razorpay UPI Reserve Pay (SBMD)</span>
+          <div className="inline-flex items-center gap-2 border-[3px] border-[#000000] bg-[#CCFF00] px-4 py-1.5 text-xs font-black uppercase tracking-wider text-[#000000] shadow-[3px_3px_0px_#000000]">
+            <span>⚡ Razorpay UPI Reserve Pay</span>
           </div>
-          <h1 className="mt-3 text-4xl font-black uppercase tracking-tight text-[#000000] sm:text-5xl">
-            AgentStore
-          </h1>
-          <p className="mt-1 text-xs font-bold uppercase tracking-wider text-[#000000]/60">
-            Autonomous WebMCP Commerce Demo
-          </p>
         </div>
 
         {/* Mode Selector Card */}

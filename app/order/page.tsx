@@ -130,7 +130,7 @@ export default function OrdersIndexPage() {
             </span>
             <div>
               <h1 className="text-xl font-black uppercase tracking-tight text-[#000000]">
-                AgentStore Orders
+                Orders &amp; Settlement Ledger
               </h1>
               <p className="text-[11px] font-bold text-[#000000]/70">
                 Payer Attribution &amp; Settlement Ledger (User vs Agent)
