@@ -118,7 +118,7 @@ export async function ensureRzpCustomer(input: {
     try {
       const existing = await rzp.customers.fetch(input.existingRzpCustomerId);
       logServer("rzp", `Customer ${existing.id} validated (existing)`, {
-        detail: { contact, rzp_customer_id: existing.id },
+        detail: existing,
         ...logOpts,
       });
       return { ok: true, rzpCustomerId: existing.id };
@@ -143,7 +143,7 @@ export async function ensureRzpCustomer(input: {
     } as unknown as Customers.RazorpayCustomerBaseRequestBody;
     const customer = await rzp.customers.create(params);
     logServer("rzp", `Customer resolved → ${customer.id}`, {
-      detail: { contact, rzp_customer_id: customer.id, created: customer.created_at },
+      detail: customer,
       ...logOpts,
     });
     return { ok: true, rzpCustomerId: customer.id };
@@ -249,7 +249,7 @@ export async function fetchCustomerTokens(
         vpa: typeof token.vpa === "object" && token.vpa ? token.vpa.username ?? undefined : undefined,
       }));
     logServer("rzp", `Fetched ${tokens.length} UPI token(s) for ${rzpCustomerId}`, {
-      detail: { rzp_customer_id: rzpCustomerId, tokens: tokens.map((t) => ({ token_id: t.tokenId, status: t.status })) },
+      detail: res,
       ...logOpts,
     });
     return { ok: true, tokens };
@@ -394,12 +394,7 @@ export async function createChargeOrder(
       "rzp",
       `Charge order ${order.id} created${tokenId ? ` with notification (token_id: ${tokenId}${paymentAfter ? `, payment_after: ${paymentAfter}` : ""})` : ""}`,
       {
-        detail: {
-          order_id: order.id,
-          amount_paise: input.amountPaise,
-          token_id: tokenId ?? null,
-          ...(paymentAfter ? { payment_after: paymentAfter } : {}),
-        },
+        detail: order,
         ...logOpts,
       }
     );
@@ -485,12 +480,7 @@ export async function debitToken(input: DebitInput): Promise<DebitResult> {
     };
     const paymentId = result.razorpay_payment_id;
     logServer("rzp", `Recurring debit succeeded for order ${input.rzpOrderId}`, {
-      detail: {
-        order_id: input.rzpOrderId,
-        payment_id: paymentId,
-        amount_paise: input.amountPaise,
-        token_id: `${input.tokenId.slice(0, 8)}…`,
-      },
+      detail: result,
       ...logOpts,
     });
     return {
@@ -518,6 +508,7 @@ export async function debitToken(input: DebitInput): Promise<DebitResult> {
             order_id: input.rzpOrderId,
             amount_paise: input.amountPaise,
             token_id: input.tokenId,
+            razorpay_response: (e as RzpError)?.error ?? { message: msg, reason },
             notification_schedule: "25_hours_recurring",
           },
           ...logOpts,
