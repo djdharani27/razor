@@ -8,6 +8,7 @@ import type { CustomerProfile } from "@/components/customer-profile";
 import {
   readSavedCustomer,
   saveCustomer,
+  clearSavedCustomer,
   useSavedCustomer,
 } from "@/components/customer-profile";
 import type { AuthoriseResult } from "@/components/rzp-authorise-button";
@@ -191,10 +192,23 @@ export default function AgentPage() {
         </div>
         <div className="flex items-center gap-2">
           {customer ? (
-            <span className="inline-flex items-center gap-1.5 border-2 border-[#000000] bg-[#FFFFFF] px-3 py-1 text-xs font-bold text-[#000000] shadow-[3px_3px_0px_#000000]">
+            <div className="inline-flex items-center gap-2 border-2 border-[#000000] bg-[#FFFFFF] px-3 py-1 text-xs font-bold text-[#000000] shadow-[3px_3px_0px_#000000]">
               <span className="h-2 w-2 bg-[#000000]" />
-              {customer.name} · {customer.contact}
-            </span>
+              <span>{customer.name} · {customer.contact}</span>
+              <button
+                type="button"
+                onClick={() => {
+                  clearSavedCustomer();
+                  setChatCustomer(null);
+                  refresh();
+                  window.location.reload();
+                }}
+                title="Reset saved customer to test new customer flow"
+                className="ml-1 border border-[#000000] bg-[#FF0055] px-1.5 py-0.5 text-[10px] font-black uppercase text-[#FFFFFF] shadow-[1px_1px_0px_#000000] transition-transform active:translate-y-[1px]"
+              >
+                Reset
+              </button>
+            </div>
           ) : (
             <button
               type="button"

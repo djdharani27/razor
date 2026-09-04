@@ -49,19 +49,6 @@ export async function POST(request: Request) {
         contact: String(customer.contact).replace(/[^\d]/g, "").slice(-10),
         email: customer.email ? String(customer.email).trim() : null,
       });
-    } else if (!session.customer) {
-      // Fallback: check SQLite database for recent registered customer
-      const dbCustomer = initDb()
-        .prepare("SELECT * FROM customers ORDER BY id DESC LIMIT 1")
-        .get() as CustomerRow | undefined;
-      if (dbCustomer) {
-        setCustomer(sessionId, {
-          name: dbCustomer.name,
-          contact: dbCustomer.contact,
-          email: dbCustomer.email ?? null,
-          rzpCustomerId: dbCustomer.rzp_customer_id ?? null,
-        });
-      }
     }
 
     const result = await processAgentMessage(sessionId, message.trim());

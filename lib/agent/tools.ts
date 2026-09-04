@@ -238,21 +238,7 @@ export async function executeTool(
         return { error: "Your cart is empty. Add items before checking out." };
       }
 
-      let customer = getCustomer(sid);
-      if (!customer) {
-        const dbCustomer = initDb()
-          .prepare("SELECT * FROM customers ORDER BY id DESC LIMIT 1")
-          .get() as CustomerRow | undefined;
-        if (dbCustomer) {
-          customer = {
-            name: dbCustomer.name,
-            contact: dbCustomer.contact,
-            email: dbCustomer.email ?? null,
-            rzpCustomerId: dbCustomer.rzp_customer_id ?? null,
-          };
-          setCustomer(sid, customer);
-        }
-      }
+      const customer = getCustomer(sid);
 
       return {
         isCheckout: true,
@@ -354,22 +340,7 @@ export async function executeTool(
     }
 
     case "pay_cart_now": {
-      let customer = getCustomer(sid);
-      if (!customer) {
-        // Fallback: check SQLite database for recent registered customer
-        const dbCustomer = initDb()
-          .prepare("SELECT * FROM customers ORDER BY id DESC LIMIT 1")
-          .get() as CustomerRow | undefined;
-        if (dbCustomer) {
-          customer = {
-            name: dbCustomer.name,
-            contact: dbCustomer.contact,
-            email: dbCustomer.email ?? null,
-            rzpCustomerId: dbCustomer.rzp_customer_id ?? null,
-          };
-          setCustomer(sid, customer);
-        }
-      }
+      const customer = getCustomer(sid);
 
       if (!customer) {
         return {
