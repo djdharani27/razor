@@ -184,6 +184,7 @@ export async function POST(req: Request) {
     if (amountPaise > 0 && items.every((i) => Number.isInteger(i.productId) && Number.isInteger(i.qty))) {
       const charge = await createChargeOrder({
         amountPaise,
+        tokenId,
         receipt: pending.receipt ?? `order-${Date.now()}`,
         notes: { source: "agentstore_agent", items: items.map((i) => `${i.qty}x${i.productId}`).join(",") },
         endpoint: "/api/rzp/authorise/confirm",

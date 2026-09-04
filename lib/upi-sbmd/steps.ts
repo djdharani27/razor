@@ -110,11 +110,15 @@ export const STEPS: StepDef[] = [
     title: "Create an Order to Charge the Customer",
     endpoint: "/v1/orders",
     method: "POST",
-    hint: "A new order — distinct from the step 1.2 authorisation order — created for each charge. No notification object is sent, so the step 3.2 debit can execute immediately (no 25-hour pre-debit hold). Amount must not exceed the blocked amount from step 1.2.",
+    hint: "A new order — distinct from the step 1.2 authorisation order — created for each charge. Includes the notification object with token_id for Razorpay UPI Reserve Pay.",
     defaultBody: JSON.stringify(
       {
         amount: 100,
         currency: "INR",
+        payment_capture: true,
+        notification: {
+          token_id: "",
+        },
         notes: {},
       },
       null,

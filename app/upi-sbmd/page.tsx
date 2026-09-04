@@ -177,16 +177,11 @@ function resolveFetchPaymentId(input: {
       return "";
     }
   })();
-  const saved = extractField(
-    (() => {
-      try {
-        return JSON.parse(input.checkoutOutput ?? "");
-      } catch {
-        return null;
-      }
-    })(),
-    "razorpay_payment_id"
-  );
+  const saved = readIdFromOutput(input.checkoutOutput, [
+    "razorpay_payment_id",
+    "payment_id",
+    "id",
+  ]);
   return saved ?? pasted;
 }
 
@@ -498,16 +493,10 @@ export default function Home() {
     // never accidentally POST a hardcoded/fake id to Razorpay.
     let finalBody = requestBody;
     let resolvedEndpoint = stepEndpoint(id);
-    const realCustomerId = extractField(
-      (() => {
-        try {
-          return JSON.parse(state.outputs.createCustomer ?? "");
-        } catch {
-          return null;
-        }
-      })(),
-      "customer_id"
-    );
+    const realCustomerId = readIdFromOutput(state.outputs.createCustomer, [
+      "customer_id",
+      "id",
+    ]);
     if (id === "createOrder") {
       if (!realCustomerId) {
         alert(
@@ -536,12 +525,42 @@ export default function Home() {
       resolvedEndpoint = def.endpoint.replace(":id", payId);
     }
     if (id === "createChargeOrder") {
-      // No notification is sent on the 3.1 charge order — that avoids the
-      // 25-hour pre-debit hold and lets the 3.2 debit run immediately. Strip
-      // any notification the editor still carries so it never reaches Razorpay.
+      // Step 3.1 creates an order with a 25-hour pre-debit notification per Razorpay UPI Reserve Pay docs
       const parsed = JSON.parse(requestBody) as Record<string, unknown>;
-      const cleaned = { ...parsed };
-      delete cleaned.notification;
+      const realTokenId = readIdFromOutput(state.outputs.fetchPayment, [
+        "token_id",
+        "token",
+        "id",
+      ]);
+      const notif =
+        parsed.notification && typeof parsed.notification === "object"
+          ? (parsed.notification as Record<string, unknown>)
+          : {};
+      const pastedToken =
+        typeof notif.token_id === "string" && notif.token_id.trim() !== ""
+          ? notif.token_id.trim()
+          : "";
+      const tokenId = pastedToken || realTokenId;
+
+      if (!tokenId) {
+        alert(
+          `Step ${def.num} needs a real token_id. Run step ${STEP_MAP.fetchPayment.num} first (its API response provides the token_id), or paste a real one into notification.token_id.`
+        );
+        return;
+      }
+
+      const nowSec = Math.floor(Date.now() / 1000);
+      const hasExplicitPaymentAfter =
+        typeof notif.payment_after === "number" && notif.payment_after > nowSec;
+
+      const cleaned: Record<string, unknown> = {
+        ...parsed,
+        payment_capture: true,
+        notification: {
+          token_id: tokenId,
+          ...(hasExplicitPaymentAfter ? { payment_after: notif.payment_after } : {}),
+        },
+      };
       if (parsed.notes && typeof parsed.notes === "object") {
         const hasKeys = Object.keys(parsed.notes).length > 0;
         if (!hasKeys) delete cleaned.notes;
@@ -551,26 +570,15 @@ export default function Home() {
     if (id === "createRecurringPayment") {
       const parsed = JSON.parse(requestBody) as Record<string, unknown>;
       const pastedToken = typeof parsed.token === "string" ? parsed.token.trim() : "";
-      const tokenId = extractField(
-        (() => {
-          try {
-            return JSON.parse(state.outputs.fetchPayment ?? "");
-          } catch {
-            return null;
-          }
-        })(),
-        "token_id"
-      );
-      const chargeOrderId = extractField(
-        (() => {
-          try {
-            return JSON.parse(state.outputs.createChargeOrder ?? "");
-          } catch {
-            return null;
-          }
-        })(),
-        "order_id"
-      );
+      const tokenId = readIdFromOutput(state.outputs.fetchPayment, [
+        "token_id",
+        "token",
+        "id",
+      ]);
+      const chargeOrderId = readIdFromOutput(state.outputs.createChargeOrder, [
+        "order_id",
+        "id",
+      ]);
       if (!realCustomerId) {
         alert(
           `Step ${def.num} needs a real customer_id. Run step ${STEP_MAP.createCustomer.num} first, or paste a real one into this step's input.`
@@ -744,16 +752,7 @@ export default function Home() {
     const def = STEP_MAP[id];
     const out = state.outputs[id];
     if (!out) return;
-    const customerId = extractField(
-      (() => {
-        try {
-          return JSON.parse(out);
-        } catch {
-          return null;
-        }
-      })(),
-      "customer_id"
-    );
+    const customerId = readIdFromOutput(out, ["customer_id", "id"]);
     const nextId = STEP_ORDER[STEP_ORDER.indexOf(id) + 1];
     if (!nextId || !customerId) {
       alert("No customer_id found in this step's output.");
@@ -806,16 +805,7 @@ export default function Home() {
       const prevId = STEP_ORDER[idx - 1];
       const prevOutput = state.outputs[prevId];
       if (prevOutput) {
-        const customerId = extractField(
-          (() => {
-            try {
-              return JSON.parse(prevOutput);
-            } catch {
-              return null;
-            }
-          })(),
-          "customer_id"
-        );
+        const customerId = readIdFromOutput(prevOutput, ["customer_id", "id"]);
         if (customerId) {
           mergeInput(stepId, prettyJson(entry.requestBody));
         }

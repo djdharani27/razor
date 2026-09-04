@@ -200,6 +200,7 @@ async function completePendingDebit(opts: {
 }): Promise<DebitOutcome> {
   const charge = await createChargeOrder({
     amountPaise: opts.amountPaise,
+    tokenId: opts.tokenId,
     receipt: opts.receipt,
     notes: { source: "agentstore", items: opts.items.map((i) => `${i.qty}x${i.productId}`).join(",") },
     endpoint: opts.endpoint,
@@ -349,6 +350,7 @@ export async function executePayment(input: ExecutePaymentOptions): Promise<Paym
     const mandate = mandateResolution.usable;
     const charge = await createChargeOrder({
       amountPaise: input.amountPaise,
+      tokenId: mandate.token_id,
       receipt: input.receipt,
       notes: input.notes ?? { source: "agentstore" },
       endpoint: input.endpoint,

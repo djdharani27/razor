@@ -377,7 +377,7 @@ export async function executeTool(
       });
       return {
         status: "captured",
-        message: "Payment captured!",
+        message: "Order placed!",
         orderId: debit.localOrderId,
         rzpOrderId: debit.rzpOrderId,
         paymentId: debit.paymentId ?? null,

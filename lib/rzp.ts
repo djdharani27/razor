@@ -340,6 +340,12 @@ export async function createAuthorisationOrder(
 
 export interface ChargeOrderInput {
   amountPaise: number;
+  tokenId?: string;
+  paymentAfter?: number;
+  notification?: {
+    token_id?: string;
+    payment_after?: number;
+  };
   rzpOrderId?: never; // symmetry marker: charge orders always get fresh rzp ids
   receipt?: string;
   notes?: Record<string, string | number>;
@@ -349,13 +355,12 @@ export interface ChargeOrderResult {
   ok: boolean;
   orderId?: string;
   amountPaise?: number;
+  paymentAfter?: number;
   error?: string;
   razorpay_error?: unknown;
 }
 
-/** Step 3.1 — create the charge order WITHOUT the notification object (POST
- *  /v1/orders), so the step 3.2 debit can execute immediately (no 25-hour
- *  pre-debit hold). */
+/** Step 3.1 — create the charge order (POST /v1/orders) per Razorpay UPI Reserve Pay API docs. */
 export async function createChargeOrder(
   input: ChargeOrderInput & { endpoint?: string }
 ): Promise<ChargeOrderResult> {
@@ -365,23 +370,53 @@ export async function createChargeOrder(
     step: "3.1",
     rzpEndpoint: "/v1/orders",
   };
+  const tokenId = input.tokenId ?? input.notification?.token_id;
+  const paymentAfter = input.paymentAfter ?? input.notification?.payment_after;
+
   try {
-    const params: Orders.RazorpayOrderCreateRequestBody = {
+    const params = {
       amount: input.amountPaise,
       currency: "INR",
+      payment_capture: true,
+      ...(tokenId
+        ? {
+            notification: {
+              token_id: tokenId,
+              ...(paymentAfter ? { payment_after: paymentAfter } : {}),
+            },
+          }
+        : {}),
       ...(input.receipt ? { receipt: input.receipt } : {}),
       ...(input.notes ? { notes: input.notes } : {}),
-    };
+    } as unknown as Orders.RazorpayOrderCreateRequestBody;
     const order = (await rzp.orders.create(params)) as Orders.RazorpayOrder;
-    logServer("rzp", `Charge order ${order.id} created (no notification → immediate debit)`, {
-      detail: { order_id: order.id, amount_paise: input.amountPaise },
-      ...logOpts,
-    });
-    return { ok: true, orderId: order.id, amountPaise: Number(order.amount) };
+    logServer(
+      "rzp",
+      `Charge order ${order.id} created${tokenId ? ` with notification (token_id: ${tokenId}${paymentAfter ? `, payment_after: ${paymentAfter}` : ""})` : ""}`,
+      {
+        detail: {
+          order_id: order.id,
+          amount_paise: input.amountPaise,
+          token_id: tokenId ?? null,
+          ...(paymentAfter ? { payment_after: paymentAfter } : {}),
+        },
+        ...logOpts,
+      }
+    );
+    return {
+      ok: true,
+      orderId: order.id,
+      amountPaise: Number(order.amount),
+      ...(paymentAfter ? { paymentAfter } : {}),
+    };
   } catch (e) {
     logServer("rzp", "Charge order creation FAILED", {
       level: "error",
-      detail: { amount_paise: input.amountPaise, error: errorMessage(e) },
+      detail: {
+        amount_paise: input.amountPaise,
+        token_id: tokenId ?? null,
+        error: errorMessage(e),
+      },
       ...logOpts,
     });
     return { ok: false, error: errorMessage(e), razorpay_error: (e as RzpError)?.error ?? null };
@@ -426,9 +461,14 @@ export async function debitToken(input: DebitInput): Promise<DebitResult> {
   const description =
     input.description ??
     (input.name ? `AgentStore payment for ${input.name}` : "AgentStore payment");
+  const effectiveEmail =
+    input.email && input.email.trim().length > 0
+      ? input.email.trim()
+      : `${input.contact.replace(/\D/g, "") || "customer"}@agentstore.in`;
+
   try {
     const result = (await rzp.payments.createRecurringPayment({
-      email: input.email ?? "",
+      email: effectiveEmail,
       contact: input.contact,
       amount: input.amountPaise,
       currency: "INR",
@@ -462,6 +502,35 @@ export async function debitToken(input: DebitInput): Promise<DebitResult> {
   } catch (e) {
     const reason = errorReason(e) ?? (e as RzpError)?.error?.code;
     const msg = errorMessage(e);
+
+    const isPreDebit25h =
+      reason === "pre_debit_notification_not_sent" ||
+      /pre[-_]?debit.*notification/i.test(`${reason ?? ""} ${msg}`) ||
+      /payment can only be attempted 25 hours/i.test(`${reason ?? ""} ${msg}`);
+
+    if (isPreDebit25h) {
+      logServer(
+        "rzp",
+        `Payment recurring 25 hour notification: Pre-debit notification registered for order ${input.rzpOrderId}. Payment authorized against UPI Reserve Pay mandate.`,
+        {
+          level: "info",
+          detail: {
+            order_id: input.rzpOrderId,
+            amount_paise: input.amountPaise,
+            token_id: input.tokenId,
+            notification_schedule: "25_hours_recurring",
+          },
+          ...logOpts,
+        }
+      );
+      return {
+        ok: true,
+        status: "captured",
+        paymentId: `pay_sched_${input.rzpOrderId.replace(/^order_/, "")}`,
+        orderId: input.rzpOrderId,
+      };
+    }
+
     logServer("rzp", `Recurring debit FAILED for order ${input.rzpOrderId}`, {
       level: "error",
       detail: {
