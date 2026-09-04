@@ -48,8 +48,13 @@ export default function AgentPage() {
   }, [messages, loading]);
 
   const sendMessage = useCallback(
-    async (text: string, withCustomer: CustomerProfile | null = customer) => {
+    async (text: string, withCustomer?: CustomerProfile | null) => {
       if (loading) return;
+
+      const activeCustomer =
+        withCustomer !== undefined
+          ? withCustomer
+          : (customer ?? chatCustomer ?? readSavedCustomer());
 
       const userMsg: DisplayMessage = {
         id: `user-${Date.now()}`,
@@ -67,8 +72,8 @@ export default function AgentPage() {
           body: JSON.stringify({
             message: text,
             sessionId,
-            customer: withCustomer
-              ? { name: withCustomer.name, contact: withCustomer.contact, email: withCustomer.email ?? null }
+            customer: activeCustomer
+              ? { name: activeCustomer.name, contact: activeCustomer.contact, email: activeCustomer.email ?? null }
               : null,
           }),
         });
@@ -86,28 +91,26 @@ export default function AgentPage() {
           setSessionId(data.sessionId);
         }
 
-        // Mirror a chat-collected customer into localStorage so the
+        // Mirror a chat-collected or fetched customer into localStorage so the
         // authorisation card (which reads the profile from localStorage) can
-        // render its "Approve UPI Reserve Pay block" button. remember_customer
-        // only stores the identity on the server session — without this sync
-        // the button would never appear when details are given in chat.
+        // render its "Approve UPI Reserve Pay block" button.
         const remembered = (data.toolCalls as ToolCall[] | undefined)?.find(
           (tc) =>
-            tc.name === "remember_customer" &&
-            (tc.result as Record<string, unknown> | null)?.saved === true
-        )?.result as { name?: string; contact?: string; email?: string | null } | undefined;
-        if (remembered?.name && remembered?.contact) {
+            (tc.name === "remember_customer" || tc.name === "fetch_customer") &&
+            ((tc.result as Record<string, unknown> | null)?.saved === true ||
+             (tc.result as Record<string, unknown> | null)?.found === true)
+        )?.result as { name?: string; contact?: string; email?: string | null; customer?: { name?: string; contact?: string; email?: string | null } } | undefined;
+
+        const profileData = remembered?.customer ?? remembered;
+        if (profileData?.name && profileData?.contact) {
           const profile: CustomerProfile = {
-            name: String(remembered.name),
-            contact: String(remembered.contact),
-            email: remembered.email ?? null,
+            name: String(profileData.name),
+            contact: String(profileData.contact),
+            email: profileData.email ?? null,
           };
           setChatCustomer(profile);
-          const saved = readSavedCustomer();
-          if (!saved || saved.contact !== profile.contact) {
-            saveCustomer(profile);
-            refresh();
-          }
+          saveCustomer(profile);
+          refresh();
         }
 
         const agentMsg: DisplayMessage = {
@@ -125,7 +128,7 @@ export default function AgentPage() {
         setLoading(false);
       }
     },
-    [loading, sessionId, customer, refresh]
+    [loading, sessionId, customer, chatCustomer, refresh]
   );
 
   const handleProfileSave = useCallback(
@@ -223,9 +226,10 @@ export default function AgentPage() {
                 role={msg.role}
                 text={msg.text}
                 toolCalls={msg.toolCalls}
-                customer={customer ?? chatCustomer}
+                customer={customer ?? chatCustomer ?? readSavedCustomer()}
                 sessionId={sessionId}
                 onAuthoriseDone={handleAuthoriseDone}
+                onSendMessage={(msgText) => void sendMessage(msgText)}
               />
             </div>
           ))}
@@ -244,7 +248,10 @@ export default function AgentPage() {
       </div>
 
       {/* Input bar */}
-      <ChatInput onSend={(text) => void sendMessage(text)} disabled={loading} />
+      <ChatInput
+        onSend={(text) => void sendMessage(text)}
+        disabled={loading}
+      />
     </div>
   );
 }

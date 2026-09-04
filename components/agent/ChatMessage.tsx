@@ -24,6 +24,8 @@ interface ChatMessageProps {
   /** Called after a successful authorisation so the parent can append a
    *  system-style "payment captured" confirmation message. */
   onAuthoriseDone?: (result: AuthoriseResult & { amountPaise?: number }) => void;
+  /** Send message back into chat (e.g. from the Pay button). */
+  onSendMessage?: (message: string) => void;
 }
 
 const inr = new Intl.NumberFormat("en-IN", {
@@ -82,9 +84,10 @@ function extractProducts(
 /** Extract cart info from tool results */
 function extractCart(
   toolCalls: ToolCall[]
-): { items: { name: string; quantity: number; subtotal_paise: number }[]; total_display: string } | null {
+): { items: { name: string; quantity: number; subtotal_paise: number }[]; total_display: string; isCheckout?: boolean } | null {
   for (const tc of toolCalls) {
     const r = tc.result as Record<string, unknown>;
+    const isCheckout = tc.name === "checkout" || r?.isCheckout === true;
     if (r?.cart && typeof r.cart === "object") {
       const cart = r.cart as Record<string, unknown>;
       if (Array.isArray(cart.items)) {
@@ -95,10 +98,11 @@ function extractCart(
             subtotal_paise: Number(i.subtotal_paise),
           })),
           total_display: String(cart.total_display ?? ""),
+          isCheckout,
         };
       }
     }
-    // Direct cart response (view_cart)
+    // Direct cart response (view_cart or checkout)
     if (Array.isArray(r?.items) && r?.total_display) {
       return {
         items: (r.items as Record<string, unknown>[]).map((i) => ({
@@ -107,6 +111,7 @@ function extractCart(
           subtotal_paise: Number(i.subtotal_paise),
         })),
         total_display: String(r.total_display),
+        isCheckout,
       };
     }
   }
@@ -206,6 +211,7 @@ export default function ChatMessage({
   customer,
   sessionId,
   onAuthoriseDone,
+  onSendMessage,
 }: ChatMessageProps) {
   const isUser = role === "user";
   const products = extractProducts(toolCalls);
@@ -303,7 +309,7 @@ export default function ChatMessage({
         {cart && cart.items.length > 0 && (
           <div className="animate-fade-up w-full max-w-sm border-[3px] border-[#000000] bg-[#FFFFFF] p-3 shadow-[4px_4px_0px_#000000]">
             <h4 className="flex items-center gap-2 border-b-2 border-[#000000] pb-1.5 text-sm font-black uppercase tracking-tight text-[#000000]">
-              🛒 Cart
+              {cart.isCheckout ? "💳 Checkout" : "🛒 Cart"}
             </h4>
             <div className="mt-2 flex flex-col gap-1">
               {cart.items.map((item, i) => (
@@ -323,6 +329,20 @@ export default function ChatMessage({
                 </span>
               </div>
             </div>
+
+            {/* Pay button - only when checkout */}
+            {cart.isCheckout && (
+              <button
+                type="button"
+                onClick={() => onSendMessage?.("Pay")}
+                className="mt-3 flex w-full items-center justify-center gap-2 border-[3px] border-[#000000] bg-[#CCFF00] py-2.5 text-sm font-black uppercase tracking-wider text-[#000000] shadow-[3px_3px_0px_#000000] transition-all duration-150 hover:-translate-y-[1px] hover:shadow-[4px_5px_0px_#000000] active:translate-y-[2px] active:shadow-[1px_1px_0px_#000000]"
+              >
+                <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" className="h-4 w-4">
+                  <path fillRule="evenodd" d="M2.5 4A1.5 1.5 0 001 5.5V6h18v-.5A1.5 1.5 0 0017.5 4h-15zM19 8.5H1v6A1.5 1.5 0 002.5 16h15a1.5 1.5 0 001.5-1.5v-6zM3 13.25a.75.75 0 01.75-.75h1.5a.75.75 0 010 1.5h-1.5a.75.75 0 01-.75-.75zm4.75-.75a.75.75 0 000 1.5h3.5a.75.75 0 000-1.5h-3.5z" clipRule="evenodd" />
+                </svg>
+                <span>Pay {cart.total_display}</span>
+              </button>
+            )}
           </div>
         )}
 

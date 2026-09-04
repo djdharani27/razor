@@ -15,8 +15,10 @@ import {
   findProducts,
   getProductById,
   getCustomerByContact,
+  upsertCustomer,
+  initDb,
 } from "@/lib/db";
-import type { Product } from "@/lib/types";
+import type { Product, CustomerRow } from "@/lib/types";
 import {
   getCart,
   setCart,
@@ -96,6 +98,24 @@ export const toolDeclarations: FunctionDeclaration[] = [
     name: "view_cart",
     description: "Returns the current cart contents with product details and total.",
     parameters: { type: Type.OBJECT, properties: {} },
+  },
+  {
+    name: "checkout",
+    description:
+      "Prepares and displays the checkout review with the Pay button. Call this when the customer asks to checkout, proceed to payment, or says 'yes' to checking out.",
+    parameters: { type: Type.OBJECT, properties: {} },
+  },
+  {
+    name: "fetch_customer",
+    description:
+      "Fetches an existing customer's saved profile by their 10-digit Indian mobile number from the database. Call this if a customer provides their phone number or asks to retrieve their account.",
+    parameters: {
+      type: Type.OBJECT,
+      properties: {
+        contact: { type: Type.STRING, description: "Customer's 10-digit Indian mobile number" },
+      },
+      required: ["contact"],
+    },
   },
   {
     name: "remember_customer",
@@ -212,6 +232,78 @@ export async function executeTool(
       return cartWithDetails(sid);
     }
 
+    case "checkout": {
+      const cartInfo = cartWithDetails(sid);
+      if (cartInfo.items.length === 0) {
+        return { error: "Your cart is empty. Add items before checking out." };
+      }
+
+      let customer = getCustomer(sid);
+      if (!customer) {
+        const dbCustomer = initDb()
+          .prepare("SELECT * FROM customers ORDER BY id DESC LIMIT 1")
+          .get() as CustomerRow | undefined;
+        if (dbCustomer) {
+          customer = {
+            name: dbCustomer.name,
+            contact: dbCustomer.contact,
+            email: dbCustomer.email ?? null,
+            rzpCustomerId: dbCustomer.rzp_customer_id ?? null,
+          };
+          setCustomer(sid, customer);
+        }
+      }
+
+      return {
+        isCheckout: true,
+        cart: cartInfo,
+        customer: customer ? { name: customer.name, contact: customer.contact } : null,
+        message: customer
+          ? `Ready for checkout, ${customer.name}! Total is ${cartInfo.total_display}. Click the Pay button below to complete your order.`
+          : `Ready for checkout! Total is ${cartInfo.total_display}. Please provide your full name and 10-digit Indian mobile number to complete payment.`,
+      };
+    }
+
+    case "fetch_customer": {
+      const rawContact = String(args.contact ?? "").trim();
+      const contact = normaliseContact(rawContact);
+      if (!contact) {
+        return {
+          error: `Please provide a valid 10-digit Indian mobile number (got "${rawContact || "(empty)"}").`,
+        };
+      }
+
+      const existing = getCustomerByContact(contact);
+      if (!existing) {
+        return {
+          found: false,
+          message: `No saved profile found for mobile number ${contact}. Please ask for their full name to register.`,
+        };
+      }
+
+      setCustomer(sid, {
+        name: existing.name,
+        contact: existing.contact,
+        email: existing.email ?? null,
+        rzpCustomerId: existing.rzp_customer_id ?? null,
+      });
+
+      logServer("fetch_customer", `Fetched profile for ${existing.name} (${contact})`, {
+        detail: { contact, rzp_customer_id: existing.rzp_customer_id, session: sid },
+        endpoint: "fetch_customer",
+      });
+
+      return {
+        found: true,
+        customer: {
+          name: existing.name,
+          contact: existing.contact,
+          email: existing.email,
+        },
+        message: `Welcome back, ${existing.name}! Your details have been fetched.`,
+      };
+    }
+
     case "remember_customer": {
       const name = String(args.name ?? "").trim();
       const rawContact = String(args.contact ?? "").trim();
@@ -238,6 +330,14 @@ export async function executeTool(
       });
       const rzpCustomerId = rzp.ok ? rzp.rzpCustomerId ?? null : null;
 
+      // Save to SQLite database so customer is permanently remembered
+      upsertCustomer({
+        contact,
+        name,
+        email,
+        rzpCustomerId,
+      });
+
       setCustomer(sid, { name, contact, email, rzpCustomerId });
       logServer("remember_customer", `Identity recorded for ${name}`, {
         detail: { contact, rzp_customer_id: rzpCustomerId, session: sid },
@@ -245,7 +345,7 @@ export async function executeTool(
       });
 
       return {
-        message: `Thanks, ${name}! Your details are saved for this conversation.`,
+        message: `Thanks, ${name}! Your details are saved and will be remembered for future orders.`,
         name,
         contact,
         ...(email ? { email } : {}),
@@ -254,7 +354,23 @@ export async function executeTool(
     }
 
     case "pay_cart_now": {
-      const customer = getCustomer(sid);
+      let customer = getCustomer(sid);
+      if (!customer) {
+        // Fallback: check SQLite database for recent registered customer
+        const dbCustomer = initDb()
+          .prepare("SELECT * FROM customers ORDER BY id DESC LIMIT 1")
+          .get() as CustomerRow | undefined;
+        if (dbCustomer) {
+          customer = {
+            name: dbCustomer.name,
+            contact: dbCustomer.contact,
+            email: dbCustomer.email ?? null,
+            rzpCustomerId: dbCustomer.rzp_customer_id ?? null,
+          };
+          setCustomer(sid, customer);
+        }
+      }
+
       if (!customer) {
         return {
           error:
