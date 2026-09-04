@@ -342,6 +342,7 @@ export default function ChatMessage({
                 onClick={() => {
                   setPaying(true);
                   onSendMessage?.("Pay");
+                  setTimeout(() => setPaying(false), 6000);
                 }}
                 disabled={paying}
                 className="mt-3 flex w-full items-center justify-center gap-2 border-[3px] border-[#000000] bg-[#CCFF00] py-2.5 text-sm font-black uppercase tracking-wider text-[#000000] shadow-[3px_3px_0px_#000000] transition-all duration-150 hover:-translate-y-[1px] hover:shadow-[4px_5px_0px_#000000] active:translate-y-[2px] active:shadow-[1px_1px_0px_#000000] disabled:cursor-not-allowed disabled:opacity-50"

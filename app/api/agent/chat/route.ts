@@ -5,7 +5,13 @@
 
 import { NextResponse } from "next/server";
 import { processAgentMessage } from "@/lib/agent/gemini";
-import { getOrCreateSession, getCustomer, setCustomer } from "@/lib/agent/session";
+import {
+  getOrCreateSession,
+  getCustomer,
+  setCustomer,
+  findSessionByContact,
+  setCart,
+} from "@/lib/agent/session";
 import { initDb } from "@/lib/db";
 import type { CustomerRow } from "@/lib/types";
 
@@ -44,11 +50,21 @@ export async function POST(request: Request) {
     // so a returning customer's identity is available to the payment tools
     // without re-asking.
     if (customer?.name && customer?.contact) {
+      const cleanContact = String(customer.contact).replace(/[^\d]/g, "").slice(-10);
       setCustomer(sessionId, {
         name: String(customer.name).trim(),
-        contact: String(customer.contact).replace(/[^\d]/g, "").slice(-10),
+        contact: cleanContact,
         email: customer.email ? String(customer.email).trim() : null,
       });
+
+      // Cart recovery fallback: If this session cart is empty, recover from prior session with this contact
+      if (session.cart.length === 0 && cleanContact) {
+        const prior = findSessionByContact(cleanContact);
+        if (prior && prior.id !== sessionId && prior.cart.length > 0) {
+          session.cart = [...prior.cart];
+          setCart(sessionId, session.cart);
+        }
+      }
     }
 
     const result = await processAgentMessage(sessionId, message.trim());

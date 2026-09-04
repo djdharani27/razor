@@ -1,7 +1,10 @@
-// In-memory session store for the AI agent. Tracks conversation history,
-// cart state, the customer identity, and the payment state per session.
-// Adequate for a hackathon demo; swap for Redis/DB in production.
+// Session store for the AI agent.
+// Tracks conversation history, cart state, customer identity, and payment state per session.
+// Persisted in memory on globalThis and mirrored to .server-logs/sessions.json
+// so Next.js route re-evaluations and restarts never drop the customer's cart.
 
+import fs from "node:fs";
+import path from "node:path";
 import type { CartItem } from "@/lib/types";
 
 export interface SessionCustomer {
@@ -49,7 +52,47 @@ export interface AgentSession {
   createdAt: number;
 }
 
-const sessions = new Map<string, AgentSession>();
+declare global {
+  // eslint-disable-next-line no-var
+  var __agent_sessions: Map<string, AgentSession> | undefined;
+}
+
+const sessions: Map<string, AgentSession> =
+  globalThis.__agent_sessions || (globalThis.__agent_sessions = new Map<string, AgentSession>());
+
+const SESSIONS_FILE = path.join(process.cwd(), ".server-logs", "agent_sessions.json");
+
+function loadPersistedSessions(): void {
+  try {
+    if (fs.existsSync(SESSIONS_FILE)) {
+      const raw = fs.readFileSync(SESSIONS_FILE, "utf-8");
+      const list = JSON.parse(raw) as AgentSession[];
+      if (Array.isArray(list)) {
+        for (const s of list) {
+          if (s?.id && !sessions.has(s.id)) {
+            sessions.set(s.id, s);
+          }
+        }
+      }
+    }
+  } catch {
+    // transient read error ignored
+  }
+}
+
+// Initial load on first module evaluation
+loadPersistedSessions();
+
+function savePersistedSessions(): void {
+  try {
+    const dir = path.dirname(SESSIONS_FILE);
+    if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+    const array = Array.from(sessions.values());
+    fs.writeFileSync(SESSIONS_FILE, JSON.stringify(array, null, 2), "utf-8");
+  } catch {
+    // transient write error ignored
+  }
+}
 
 function freshPayment(): PaymentState {
   return {
@@ -66,6 +109,11 @@ function freshPayment(): PaymentState {
 export function getOrCreateSession(sessionId: string): AgentSession {
   let session = sessions.get(sessionId);
   if (!session) {
+    loadPersistedSessions();
+    session = sessions.get(sessionId);
+  }
+
+  if (!session) {
     session = {
       id: sessionId,
       cart: [],
@@ -75,17 +123,19 @@ export function getOrCreateSession(sessionId: string): AgentSession {
       createdAt: Date.now(),
     };
     sessions.set(sessionId, session);
+    savePersistedSessions();
   }
   return session;
 }
 
 export function getSession(sessionId: string): AgentSession | undefined {
-  return sessions.get(sessionId);
+  return getOrCreateSession(sessionId);
 }
 
 export function addMessage(sessionId: string, msg: ChatMessage): void {
   const session = getOrCreateSession(sessionId);
   session.messages.push(msg);
+  savePersistedSessions();
 }
 
 export function getMessages(sessionId: string): ChatMessage[] {
@@ -93,7 +143,9 @@ export function getMessages(sessionId: string): ChatMessage[] {
 }
 
 export function setCart(sessionId: string, cart: CartItem[]): void {
-  getOrCreateSession(sessionId).cart = cart;
+  const session = getOrCreateSession(sessionId);
+  session.cart = cart;
+  savePersistedSessions();
 }
 
 export function getCart(sessionId: string): CartItem[] {
@@ -108,6 +160,7 @@ export function setCustomer(sessionId: string, customer: SessionCustomer): void 
     email: customer.email ?? null,
     rzpCustomerId: customer.rzpCustomerId ?? null,
   };
+  savePersistedSessions();
 }
 
 export function getCustomer(sessionId: string): SessionCustomer | null {
@@ -117,6 +170,7 @@ export function getCustomer(sessionId: string): SessionCustomer | null {
 export function updatePayment(sessionId: string, patch: Partial<PaymentState>): void {
   const session = getOrCreateSession(sessionId);
   Object.assign(session.payment, patch);
+  savePersistedSessions();
 }
 
 export function getPayment(sessionId: string): PaymentState {
@@ -124,5 +178,22 @@ export function getPayment(sessionId: string): PaymentState {
 }
 
 export function resetPayment(sessionId: string): void {
-  getOrCreateSession(sessionId).payment = freshPayment();
+  const session = getOrCreateSession(sessionId);
+  session.payment = freshPayment();
+  savePersistedSessions();
+}
+
+/** Find any active session with cart items for this customer contact (recovery fallback) */
+export function findSessionByContact(contact: string): AgentSession | undefined {
+  loadPersistedSessions();
+  const cleanContact = contact.replace(/[^\d]/g, "").slice(-10);
+  for (const s of sessions.values()) {
+    if (
+      s.customer?.contact?.replace(/[^\d]/g, "").slice(-10) === cleanContact &&
+      s.cart.length > 0
+    ) {
+      return s;
+    }
+  }
+  return undefined;
 }

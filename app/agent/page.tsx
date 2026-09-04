@@ -53,7 +53,14 @@ const MCP_CONFIG = JSON.stringify(
 export default function AgentPage() {
   const [messages, setMessages] = useState<DisplayMessage[]>([]);
   const [loading, setLoading] = useState(false);
-  const [sessionId, setSessionId] = useState<string | null>(null);
+  const [sessionId, setSessionId] = useState<string | null>(() => {
+    if (typeof window !== "undefined") {
+      return sessionStorage.getItem("agent_session_id");
+    }
+    return null;
+  });
+  const sessionIdRef = useRef<string | null>(sessionId);
+  sessionIdRef.current = sessionId;
   const [error, setError] = useState<string | null>(null);
   const [showProfileForm, setShowProfileForm] = useState(false);
   const [agentCode, setAgentCode] = useState<string | null>(null);
@@ -121,12 +128,14 @@ export default function AgentPage() {
       setError(null);
 
       try {
+        const activeSid = sessionIdRef.current || sessionId;
         const res = await fetch("/api/agent/chat", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
+          signal: AbortSignal.timeout(35000),
           body: JSON.stringify({
             message: text,
-            sessionId,
+            sessionId: activeSid,
             customer: currentCustomer
               ? { name: currentCustomer.name, contact: currentCustomer.contact, email: currentCustomer.email ?? null }
               : null,
@@ -141,9 +150,13 @@ export default function AgentPage() {
           return;
         }
 
-        // Save session ID from first response
-        if (data.sessionId && !sessionId) {
+        // Save session ID immediately to ref and state
+        if (data.sessionId) {
+          sessionIdRef.current = data.sessionId;
           setSessionId(data.sessionId);
+          if (typeof window !== "undefined") {
+            sessionStorage.setItem("agent_session_id", data.sessionId);
+          }
         }
 
         // Check if chat returned a customer profile (from tool execution or session)
@@ -294,6 +307,9 @@ export default function AgentPage() {
                   clearSavedCustomer();
                   setChatCustomer(null);
                   setAgentCode(null);
+                  if (typeof window !== "undefined") {
+                    sessionStorage.removeItem("agent_session_id");
+                  }
                   refresh();
                   window.location.reload();
                 }}
