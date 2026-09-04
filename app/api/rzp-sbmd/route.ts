@@ -86,47 +86,6 @@ export async function POST(request: Request) {
     } catch {
       json = { raw: text };
     }
-
-    // If this is Step 2.1 (/v1/payments/:id) and a mandate token was returned successfully,
-    // create the agent delegation code specifically for this verified customer!
-    if (
-      endpoint.startsWith("/v1/payments/") &&
-      method === "GET" &&
-      typeof json === "object" &&
-      json !== null &&
-      "token_id" in json &&
-      typeof (json as Record<string, unknown>).token_id === "string" &&
-      (json as Record<string, unknown>).token_id
-    ) {
-      try {
-        const { persistMandate } = await import("@/lib/payments");
-        const { upsertCustomer } = await import("@/lib/db");
-        const p = json as Record<string, unknown>;
-        const tokenId = String(p.token_id ?? "").trim();
-        const rzpCustId = String(p.customer_id ?? "").trim();
-        const rawContact = String(p.contact ?? "").replace(/[^\d]/g, "").slice(-10) || "9876543210";
-        const email = typeof p.email === "string" ? p.email : null;
-        const name = "Customer";
-
-        const cust = upsertCustomer({ contact: rawContact, name, email, rzpCustomerId: rzpCustId });
-        const stored = persistMandate({
-          localCustomerId: cust.id,
-          rzpCustomerId: rzpCustId,
-          tokenId,
-          authOrderId: String(p.order_id ?? ""),
-          authPaymentId: String(p.id ?? ""),
-          fallbackBlockPaise: 1000000,
-          fallbackExpireAt: Math.floor(Date.now() / 1000) + 86400 * 90,
-          endpoint: "/api/rzp-sbmd (Step 2.1)",
-        });
-
-        p.agent_code = stored.agentCode;
-        p.agent_token = stored.agentCode;
-      } catch (e) {
-        // Logging only - keep original response intact on error
-      }
-    }
-
     return Response.json(json, { status: upstream.status });
   }
 

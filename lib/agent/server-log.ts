@@ -27,7 +27,7 @@ function safeStringify(value: unknown): string {
     function (this: unknown, key: string, val: unknown) {
       const k = key.toLowerCase();
       if (
-        /authorization|secret|api[_-]?key|password|token\b|razorpay_signature/i.test(k) &&
+        /authorization|secret|api[_-]?key|password/i.test(k) &&
         typeof val === "string"
       ) {
         return "[REDACTED]";
@@ -39,7 +39,7 @@ function safeStringify(value: unknown): string {
       if (val && typeof val === "object" && !Array.isArray(val)) {
         const obj = val as Record<string, unknown>;
         for (const [nestedKey, nestedVal] of Object.entries(obj)) {
-          if (/authorization|secret|api[_-]?key|password|razorpay_signature/i.test(nestedKey) &&
+          if (/authorization|secret|api[_-]?key|password/i.test(nestedKey) &&
               typeof nestedVal === "string") {
             obj[nestedKey] = "[REDACTED]";
           }

@@ -187,47 +187,6 @@ export default function StepCard({
           rows={10}
           placeholder='{"run": "a step to see its response here"}'
         />
-        {(() => {
-          try {
-            const parsed = JSON.parse(output) as { agent_code?: unknown; agent_token?: unknown };
-            const code =
-              typeof parsed?.agent_code === "string"
-                ? parsed.agent_code
-                : typeof parsed?.agent_token === "string"
-                  ? parsed.agent_token
-                  : null;
-            if (!code) return null;
-            return (
-              <div className="mt-2 flex flex-col gap-2 rounded-xl border border-indigo-500/40 bg-indigo-950/40 p-3 sm:flex-row sm:items-center sm:justify-between">
-                <div className="flex items-center gap-2">
-                  <span className="text-xl">🤖</span>
-                  <div>
-                    <p className="text-xs font-semibold text-indigo-300">
-                      Step 2.1 Token Authenticated — Agent Code Generated!
-                    </p>
-                    <p className="text-[11px] text-zinc-400">
-                      This delegation code is unique to this verified customer and bank mandate.
-                    </p>
-                  </div>
-                </div>
-                <div className="flex items-center gap-2">
-                  <span className="rounded bg-black/80 px-2.5 py-1 font-mono text-sm font-bold text-indigo-200 border border-indigo-500/30">
-                    {code}
-                  </span>
-                  <button
-                    type="button"
-                    onClick={() => navigator.clipboard.writeText(code)}
-                    className="rounded bg-indigo-600 px-2.5 py-1 text-xs font-semibold text-white transition hover:bg-indigo-500"
-                  >
-                    Copy Code
-                  </button>
-                </div>
-              </div>
-            );
-          } catch {
-            return null;
-          }
-        })()}
         {outputError && lastResult && (
           <p className="text-[11px] text-red-400">
             {checkout
