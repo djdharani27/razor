@@ -5,7 +5,7 @@
 
 import { NextResponse } from "next/server";
 import { processAgentMessage } from "@/lib/agent/gemini";
-import { getOrCreateSession, setCustomer } from "@/lib/agent/session";
+import { getOrCreateSession, getCustomer, setCustomer } from "@/lib/agent/session";
 import { initDb } from "@/lib/db";
 import type { CustomerRow } from "@/lib/types";
 
@@ -52,11 +52,19 @@ export async function POST(request: Request) {
     }
 
     const result = await processAgentMessage(sessionId, message.trim());
+    const sessionCustomer = getCustomer(sessionId);
 
     return NextResponse.json({
       sessionId,
       message: result.text,
       toolCalls: result.toolCalls ?? [],
+      customer: sessionCustomer
+        ? {
+            name: sessionCustomer.name,
+            contact: sessionCustomer.contact,
+            email: sessionCustomer.email,
+          }
+        : null,
     });
   } catch (err) {
     console.error("[agent/chat] Error:", err);

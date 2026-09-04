@@ -35,12 +35,42 @@ export default function AgentPage() {
   const [sessionId, setSessionId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [showProfileForm, setShowProfileForm] = useState(false);
+  const [agentCode, setAgentCode] = useState<string | null>(null);
+  const [copiedCode, setCopiedCode] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
   const { customer, refresh } = useSavedCustomer();
   // The customer profile collected in this chat session (via remember_customer),
   // kept so the authorisation card can render even if localStorage has no
   // profile yet.
   const [chatCustomer, setChatCustomer] = useState<CustomerProfile | null>(null);
+
+  const activeCustomer = customer ?? chatCustomer ?? readSavedCustomer();
+
+  const fetchMandateStatus = useCallback(async (contact?: string | null) => {
+    const raw = contact ?? activeCustomer?.contact;
+    if (!raw) return;
+    try {
+      const res = await fetch("/api/customer/status", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ contact: raw, amountPaise: 100 }),
+      });
+      if (res.ok) {
+        const data = await res.json();
+        if (data?.mandate?.agentCode) {
+          setAgentCode(data.mandate.agentCode);
+        }
+      }
+    } catch {
+      // transient
+    }
+  }, [activeCustomer?.contact]);
+
+  useEffect(() => {
+    if (activeCustomer?.contact) {
+      void fetchMandateStatus(activeCustomer.contact);
+    }
+  }, [activeCustomer?.contact, fetchMandateStatus]);
 
   // Auto-scroll to bottom on new messages
   useEffect(() => {
@@ -53,7 +83,7 @@ export default function AgentPage() {
     async (text: string, withCustomer?: CustomerProfile | null) => {
       if (loading) return;
 
-      const activeCustomer =
+      const currentCustomer =
         withCustomer !== undefined
           ? withCustomer
           : (customer ?? chatCustomer ?? readSavedCustomer());
@@ -74,8 +104,8 @@ export default function AgentPage() {
           body: JSON.stringify({
             message: text,
             sessionId,
-            customer: activeCustomer
-              ? { name: activeCustomer.name, contact: activeCustomer.contact, email: activeCustomer.email ?? null }
+            customer: currentCustomer
+              ? { name: currentCustomer.name, contact: currentCustomer.contact, email: currentCustomer.email ?? null }
               : null,
           }),
         });
@@ -93,26 +123,44 @@ export default function AgentPage() {
           setSessionId(data.sessionId);
         }
 
-        // Mirror a chat-collected or fetched customer into localStorage so the
-        // authorisation card (which reads the profile from localStorage) can
-        // render its "Approve UPI Reserve Pay block" button.
-        const remembered = (data.toolCalls as ToolCall[] | undefined)?.find(
-          (tc) =>
-            (tc.name === "remember_customer" || tc.name === "fetch_customer") &&
-            ((tc.result as Record<string, unknown> | null)?.saved === true ||
-             (tc.result as Record<string, unknown> | null)?.found === true)
-        )?.result as { name?: string; contact?: string; email?: string | null; customer?: { name?: string; contact?: string; email?: string | null } } | undefined;
-
-        const profileData = remembered?.customer ?? remembered;
-        if (profileData?.name && profileData?.contact) {
+        // Check if chat returned a customer profile (from tool execution or session)
+        let contactToQuery: string | null = null;
+        if (data.customer?.name && data.customer?.contact) {
           const profile: CustomerProfile = {
-            name: String(profileData.name),
-            contact: String(profileData.contact),
-            email: profileData.email ?? null,
+            name: String(data.customer.name),
+            contact: String(data.customer.contact),
+            email: data.customer.email ?? null,
           };
           setChatCustomer(profile);
           saveCustomer(profile);
           refresh();
+          contactToQuery = profile.contact;
+        } else {
+          const remembered = (data.toolCalls as ToolCall[] | undefined)?.find(
+            (tc) =>
+              (tc.name === "remember_customer" || tc.name === "fetch_customer") &&
+              ((tc.result as Record<string, unknown> | null)?.saved === true ||
+               (tc.result as Record<string, unknown> | null)?.found === true)
+          )?.result as { name?: string; contact?: string; email?: string | null; customer?: { name?: string; contact?: string; email?: string | null } } | undefined;
+
+          const profileData = remembered?.customer ?? remembered;
+          if (profileData?.name && profileData?.contact) {
+            const profile: CustomerProfile = {
+              name: String(profileData.name),
+              contact: String(profileData.contact),
+              email: profileData.email ?? null,
+            };
+            setChatCustomer(profile);
+            saveCustomer(profile);
+            refresh();
+            contactToQuery = profile.contact;
+          }
+        }
+
+        if (contactToQuery) {
+          void fetchMandateStatus(contactToQuery);
+        } else if (currentCustomer?.contact) {
+          void fetchMandateStatus(currentCustomer.contact);
         }
 
         const agentMsg: DisplayMessage = {
@@ -130,7 +178,7 @@ export default function AgentPage() {
         setLoading(false);
       }
     },
-    [loading, sessionId, customer, chatCustomer, refresh]
+    [loading, sessionId, customer, chatCustomer, refresh, fetchMandateStatus]
   );
 
   const handleProfileSave = useCallback(
@@ -138,13 +186,15 @@ export default function AgentPage() {
       saveCustomer(profile);
       setShowProfileForm(false);
       refresh();
+      void fetchMandateStatus(profile.contact);
     },
-    [refresh]
+    [refresh, fetchMandateStatus]
   );
 
   const handleAuthoriseDone = useCallback(
     (result: AuthoriseResult & { amountPaise?: number }) => {
       if (result.kind !== "success") return;
+      void fetchMandateStatus();
       const debit = result.debit;
       const paidMsg: DisplayMessage = {
         id: `sys-${Date.now()}`,
@@ -156,7 +206,7 @@ export default function AgentPage() {
       };
       setMessages((prev) => [...prev, paidMsg]);
     },
-    []
+    [fetchMandateStatus]
   );
 
   return (
@@ -192,15 +242,35 @@ export default function AgentPage() {
           </div>
         </div>
         <div className="flex items-center gap-2">
-          {customer ? (
-            <div className="inline-flex items-center gap-2 border-2 border-[#000000] bg-[#FFFFFF] px-3 py-1 text-xs font-bold text-[#000000] shadow-[3px_3px_0px_#000000]">
+          {activeCustomer ? (
+            <div className="inline-flex flex-wrap items-center gap-2 border-2 border-[#000000] bg-[#FFFFFF] px-3 py-1 text-xs font-bold text-[#000000] shadow-[3px_3px_0px_#000000]">
               <span className="h-2 w-2 bg-[#000000]" />
-              <span>{customer.name} · {customer.contact}</span>
+              <span>{activeCustomer.name} · {activeCustomer.contact}</span>
+
+              {agentCode && (
+                <div className="ml-1 inline-flex items-center gap-1.5 border border-[#000000] bg-[#CCFF00] px-2 py-0.5 text-[11px] font-black text-[#000000]">
+                  <span>🤖 Agent ID:</span>
+                  <span className="font-mono">{agentCode}</span>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      navigator.clipboard.writeText(agentCode);
+                      setCopiedCode(true);
+                      setTimeout(() => setCopiedCode(false), 2000);
+                    }}
+                    className="ml-1 border border-[#000000] bg-[#FFFFFF] px-1 py-0.5 text-[10px] font-black uppercase text-[#000000] hover:bg-[#F4F4F0] active:translate-y-[1px]"
+                  >
+                    {copiedCode ? "✓ Copied" : "Copy"}
+                  </button>
+                </div>
+              )}
+
               <button
                 type="button"
                 onClick={() => {
                   clearSavedCustomer();
                   setChatCustomer(null);
+                  setAgentCode(null);
                   refresh();
                   window.location.reload();
                 }}
