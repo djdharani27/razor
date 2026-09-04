@@ -170,24 +170,16 @@ export function logServer(
       if (detail.amount_paise) lines.push(`│  ${bold}Amount:${reset}         ₹${(detail.amount_paise / 100).toFixed(2)}`);
       if (detail.local_order_id) lines.push(`│  ${bold}Local Order:${reset}    #${detail.local_order_id}`);
     }
-    // 6. Generic Object / Fallback (Clean Key-Value)
-    else {
-      const entries = Object.entries(detail);
-      if (entries.length > 0 && entries.length <= 5) {
-        for (const [k, v] of entries) {
-          const valStr = typeof v === "object" ? JSON.stringify(v) : String(v);
-          lines.push(`│  ${bold}${k}:${reset} ${valStr}`);
-        }
-      } else {
-        const compact = JSON.stringify(detail, null, 2);
-        const split = compact.split("\n").slice(0, 8);
-        for (const sl of split) {
-          lines.push(`│  ${dim}${sl}${reset}`);
-        }
-        if (compact.split("\n").length > 8) {
-          lines.push(`│  ${dim}...${reset}`);
-        }
+    // Print the complete original response from Razorpay
+    lines.push(`│`);
+    lines.push(`│  ${bold}Original Razorpay Response:${reset}`);
+    try {
+      const rawJson = JSON.stringify(detail, null, 2);
+      for (const jsonLine of rawJson.split("\n")) {
+        lines.push(`│    ${dim}${jsonLine}${reset}`);
       }
+    } catch {
+      lines.push(`│    ${dim}${String(detail)}${reset}`);
     }
   }
 
