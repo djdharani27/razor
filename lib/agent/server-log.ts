@@ -170,9 +170,11 @@ export function logServer(
       if (detail.amount_paise) lines.push(`│  ${bold}Amount:${reset}         ₹${(detail.amount_paise / 100).toFixed(2)}`);
       if (detail.local_order_id) lines.push(`│  ${bold}Local Order:${reset}    #${detail.local_order_id}`);
     }
-    // Print the complete original response from Razorpay
+    // Print the detail payload with appropriate label
+    const isRzp = stage === "rzp" || Boolean(opts.rzpEndpoint && !opts.endpoint?.startsWith("pay_cart_now"));
+    const label = isRzp ? "Original Razorpay API Response:" : "Local Application Record:";
     lines.push(`│`);
-    lines.push(`│  ${bold}Original Razorpay Response:${reset}`);
+    lines.push(`│  ${bold}${label}${reset}`);
     try {
       const rawJson = JSON.stringify(detail, null, 2);
       for (const jsonLine of rawJson.split("\n")) {

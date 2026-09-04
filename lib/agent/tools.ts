@@ -363,7 +363,7 @@ export async function executeTool(
         receiptNo: payment.receiptNo + 1,
         authOrderId: null,
       });
-      logServer("pay_cart_now", `Payment captured for order #${debit.localOrderId}`, {
+      logServer("agentstore", `Local order #${debit.localOrderId} saved to store database`, {
         detail: {
           session: sid,
           local_order_id: debit.localOrderId,
@@ -372,8 +372,6 @@ export async function executeTool(
           amount_paise: amountPaise,
         },
         endpoint: "pay_cart_now",
-        step: "3.2",
-        rzpEndpoint: "/v1/payments/create/recurring",
       });
       return {
         status: "captured",
