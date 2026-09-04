@@ -148,9 +148,10 @@ export async function POST(req: Request) {
     detail: {
       customer_id: customer.id,
       rzp_customer_id: rzpCustomerId,
-      token_id: `${tokenId.slice(0, 8)}…`,
+      token_id: tokenId,
       order_id: orderId,
       payment_id: paymentId,
+      payment: fetched.payment,
       had_signature: Boolean(signature),
     },
     endpoint: "/api/rzp/authorise/confirm",

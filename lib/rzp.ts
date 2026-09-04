@@ -314,13 +314,7 @@ export async function createAuthorisationOrder(
     };
     const order = (await rzp.orders.create(params)) as Orders.RazorpayOrder;
     logServer("rzp", `Authorisation order ${order.id} created`, {
-      detail: {
-        rzp_customer_id: input.rzpCustomerId,
-        order_id: order.id,
-        token_type: "single_block_multiple_debit",
-        max_amount: block,
-        expire_at: expireAt,
-      },
+      detail: order,
       ...logOpts,
     });
     return { ok: true, orderId: order.id, expireAt, blockPaise: block };
@@ -579,12 +573,7 @@ export async function fetchPayment(
       vpa?: string | null;
     };
     logServer("rzp", `Fetched payment ${payment.id}`, {
-      detail: {
-        payment_id: payment.id,
-        status: payment.status,
-        order_id: payment.order_id ?? null,
-        has_token: Boolean(payment.token_id),
-      },
+      detail: payment,
       ...logOpts,
     });
     return {
