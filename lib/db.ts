@@ -38,6 +38,7 @@ function migrateOrders(db: Database.Database): void {
   add("rzp_order_id", "TEXT");
   add("payment_id", "TEXT");
   add("mandate_id", "INTEGER");
+  add("paid_by", "TEXT");
 }
 
 function migrateMandates(db: Database.Database): void {
@@ -175,6 +176,12 @@ export function getOrder(orderId: number): OrderRow | undefined {
   return initDb().prepare("SELECT * FROM orders WHERE id = ?").get(orderId) as OrderRow | undefined;
 }
 
+export function getAllOrders(limit = 100): OrderRow[] {
+  return initDb()
+    .prepare("SELECT * FROM orders ORDER BY id DESC LIMIT ?")
+    .all(limit) as OrderRow[];
+}
+
 export function getOrderByRzpOrderId(rzpOrderId: string): OrderRow | undefined {
   return initDb()
     .prepare("SELECT * FROM orders WHERE rzp_order_id = ? OR razorpay_payment_link_id = ?")
@@ -188,6 +195,7 @@ export interface NewOrderInput {
   kind: OrderKind;
   customerId?: number | null;
   mandateId?: number | null;
+  paidBy?: "agent" | "user" | null;
 }
 
 export function insertOrder(order: {
@@ -195,19 +203,21 @@ export function insertOrder(order: {
   status: string;
   amount_paise: number;
   items: CartItem[];
+  paid_by?: "agent" | "user" | null;
 }): number {
   const db = initDb();
   const info = db
     .prepare(
-      `INSERT INTO orders (razorpay_payment_link_id, status, amount_paise, items_json, created_at)
-       VALUES (?, ?, ?, ?, ?)`
+      `INSERT INTO orders (razorpay_payment_link_id, status, amount_paise, items_json, created_at, paid_by)
+       VALUES (?, ?, ?, ?, ?, ?)`
     )
     .run(
       order.razorpay_payment_link_id,
       order.status,
       order.amount_paise,
       JSON.stringify(order.items),
-      Date.now()
+      Date.now(),
+      order.paid_by ?? "user"
     );
   return Number(info.lastInsertRowid);
 }
@@ -215,12 +225,13 @@ export function insertOrder(order: {
 /** Insert a Reserve Pay charge order row (kind = 'charge'). */
 export function insertChargeOrder(input: NewOrderInput): number {
   const db = initDb();
+  const payer = input.paidBy ?? (input.mandateId ? "agent" : "user");
   const info = db
     .prepare(
       `INSERT INTO orders
          (razorpay_payment_link_id, status, amount_paise, items_json, created_at,
-          kind, customer_id, rzp_order_id, payment_id, mandate_id)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, NULL, ?)`
+          kind, customer_id, rzp_order_id, payment_id, mandate_id, paid_by)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, ?)`
     )
     .run(
       input.rzpOrderId,
@@ -231,7 +242,8 @@ export function insertChargeOrder(input: NewOrderInput): number {
       input.kind,
       input.customerId ?? null,
       input.rzpOrderId,
-      input.mandateId ?? null
+      input.mandateId ?? null,
+      payer
     );
   return Number(info.lastInsertRowid);
 }

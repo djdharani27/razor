@@ -16,6 +16,9 @@ interface OrderData {
   amountPaise: number;
   items: CartItem[];
   createdAt: number;
+  paidBy?: "agent" | "user";
+  paymentId?: string | null;
+  mandateId?: number | null;
 }
 
 const STATUS_LABEL: Record<OrderData["status"], string> = {
@@ -112,15 +115,25 @@ export default function OrderPage({ params }: { params: { id: string } }) {
 
   const byId = new Map(products.map((p) => [p.id, p]));
 
+  const isAgent = order.paidBy === "agent";
+
   return (
     <main className="min-h-screen bg-[#F4F4F0] px-4 py-12 text-[#000000]">
       <div className="mx-auto max-w-2xl">
-        <Link
-          href="/"
-          className="inline-flex items-center gap-2 border-[3px] border-[#000000] bg-[#FFFFFF] px-3.5 py-1.5 text-xs font-black uppercase tracking-wider text-[#000000] shadow-[3px_3px_0px_#000000] transition-all hover:-translate-y-[1px] hover:shadow-[4px_5px_0px_#000000] active:translate-y-[1px] active:shadow-none"
-        >
-          ← Back to store
-        </Link>
+        <div className="flex items-center justify-between gap-3">
+          <Link
+            href="/"
+            className="inline-flex items-center gap-2 border-[3px] border-[#000000] bg-[#FFFFFF] px-3.5 py-1.5 text-xs font-black uppercase tracking-wider text-[#000000] shadow-[3px_3px_0px_#000000] transition-all hover:-translate-y-[1px] hover:shadow-[4px_5px_0px_#000000] active:translate-y-[1px] active:shadow-none"
+          >
+            ← Back to store
+          </Link>
+          <Link
+            href="/order"
+            className="inline-flex items-center gap-2 border-[3px] border-[#000000] bg-[#CCFF00] px-3.5 py-1.5 text-xs font-black uppercase tracking-wider text-[#000000] shadow-[3px_3px_0px_#000000] transition-all hover:-translate-y-[1px] hover:shadow-[4px_5px_0px_#000000] active:translate-y-[1px] active:shadow-none"
+          >
+            📋 All Orders
+          </Link>
+        </div>
 
         <div className="mt-6 border-[3px] border-[#000000] bg-[#FFFFFF] p-6 shadow-[6px_6px_0px_#000000]">
           <div className="flex flex-wrap items-center justify-between gap-3 border-b-2 border-[#000000] pb-4">
@@ -132,11 +145,58 @@ export default function OrderPage({ params }: { params: { id: string } }) {
                 Order #{order.id}
               </h1>
             </div>
-            <span
-              className={`inline-block px-3 py-1 text-xs font-black uppercase tracking-wider ${STATUS_STYLE[order.status]}`}
-            >
-              {STATUS_LABEL[order.status]}
-            </span>
+            <div className="flex flex-wrap items-center gap-2">
+              {isAgent ? (
+                <span className="inline-flex items-center gap-1.5 border-2 border-[#000000] bg-[#CCFF00] px-3 py-1 text-xs font-black uppercase tracking-wider text-[#000000] shadow-[2px_2px_0px_#000000]">
+                  <span>🤖</span>
+                  <span>Paid by Agent</span>
+                </span>
+              ) : (
+                <span className="inline-flex items-center gap-1.5 border-2 border-[#000000] bg-[#FFFFFF] px-3 py-1 text-xs font-black uppercase tracking-wider text-[#000000] shadow-[2px_2px_0px_#000000]">
+                  <span>👤</span>
+                  <span>Paid by User</span>
+                </span>
+              )}
+              <span
+                className={`inline-block px-3 py-1 text-xs font-black uppercase tracking-wider ${STATUS_STYLE[order.status]}`}
+              >
+                {STATUS_LABEL[order.status]}
+              </span>
+            </div>
+          </div>
+
+          {/* Payer Attribution Highlight Box */}
+          <div
+            className={`mt-4 border-2 border-[#000000] p-3.5 shadow-[2px_2px_0px_#000000] ${
+              isAgent ? "bg-[#CCFF00]/25" : "bg-[#F4F4F0]"
+            }`}
+          >
+            <div className="flex items-start gap-3">
+              <span
+                className={`flex h-8 w-8 shrink-0 items-center justify-center border-2 border-[#000000] text-base shadow-[1px_1px_0px_#000000] ${
+                  isAgent ? "bg-[#CCFF00]" : "bg-[#FEF08A]"
+                }`}
+              >
+                {isAgent ? "🤖" : "👤"}
+              </span>
+              <div>
+                <div className="flex items-center gap-2">
+                  <span className="text-xs font-black uppercase tracking-tight text-[#000000]">
+                    {isAgent
+                      ? "Autonomous AI Agent Settlement"
+                      : "Direct User Payment"}
+                  </span>
+                  <span className="border border-[#000000] bg-[#000000] px-1.5 py-0.2 text-[9px] font-black uppercase text-[#FFFFFF]">
+                    {isAgent ? "WebMCP SBMD" : "Direct Checkout"}
+                  </span>
+                </div>
+                <p className="mt-0.5 text-xs font-semibold text-[#000000]/80">
+                  {isAgent
+                    ? "This order was processed autonomously by an AI agent using a pre-authorized UPI Reserve Pay mandate. Zero PIN or human intervention required."
+                    : "This order was initiated and approved directly by the customer through standard interactive checkout."}
+                </p>
+              </div>
+            </div>
           </div>
 
           {order.status === "paid" && (
@@ -181,11 +241,25 @@ export default function OrderPage({ params }: { params: { id: string } }) {
               })}
             </ul>
 
-            <div className="mt-5 flex items-center justify-between border-t-2 border-[#000000] pt-4">
-              <span className="text-sm font-black uppercase text-[#000000]">Total Paid</span>
-              <span className="text-2xl font-black text-[#000000]">
-                {formatPaise(order.amountPaise)}
-              </span>
+            <div className="mt-5 space-y-2 border-t-2 border-[#000000] pt-4">
+              <div className="flex items-center justify-between text-xs font-bold text-[#000000]/70">
+                <span>Payer Attribution</span>
+                <span className="inline-flex items-center gap-1 font-black text-[#000000]">
+                  {isAgent ? "🤖 Autonomous AI Agent" : "👤 Human User"}
+                </span>
+              </div>
+              {order.paymentId && (
+                <div className="flex items-center justify-between text-xs font-bold text-[#000000]/70">
+                  <span>Payment ID</span>
+                  <span className="font-mono font-bold text-[#000000]">{order.paymentId}</span>
+                </div>
+              )}
+              <div className="flex items-center justify-between border-t border-[#000000]/10 pt-2">
+                <span className="text-sm font-black uppercase text-[#000000]">Total Paid</span>
+                <span className="text-2xl font-black text-[#000000]">
+                  {formatPaise(order.amountPaise)}
+                </span>
+              </div>
             </div>
           </section>
 

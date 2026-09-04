@@ -197,6 +197,13 @@ export default function Storefront({ products }: { products: Product[] }) {
             </div>
 
             <a
+              href="/order"
+              className="border-[3px] border-[#000000] bg-[#FFFFFF] px-3 py-2 text-xs font-black uppercase tracking-wider text-[#000000] shadow-[3px_3px_0px_#000000] transition-all hover:-translate-y-[1px] hover:shadow-[4px_5px_0px_#000000] active:translate-y-[1px] active:shadow-none"
+            >
+              📦 Orders
+            </a>
+
+            <a
               href="/upi-sbmd"
               className="border-[3px] border-[#000000] bg-[#FFFFFF] px-3 py-2 text-xs font-black uppercase tracking-wider text-[#000000] shadow-[3px_3px_0px_#000000] transition-all hover:-translate-y-[1px] hover:shadow-[4px_5px_0px_#000000] active:translate-y-[1px] active:shadow-none"
             >

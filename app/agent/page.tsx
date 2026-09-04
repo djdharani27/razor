@@ -312,6 +312,13 @@ export default function AgentPage() {
               + Add my details
             </button>
           )}
+          <a
+            href="/order"
+            className="flex items-center gap-1.5 border-2 border-[#000000] bg-[#FFFFFF] px-2.5 py-1 text-xs font-black uppercase tracking-wider text-[#000000] shadow-[2px_2px_0px_#000000] transition-all hover:-translate-y-[1px] hover:bg-[#FEF08A] hover:shadow-[3px_3px_0px_#000000] active:translate-y-[1px] active:shadow-none"
+            title="View all Orders & Settlements"
+          >
+            <span>📦 Orders</span>
+          </a>
           <button
             type="button"
             onClick={() => setMcpModalOpen(true)}

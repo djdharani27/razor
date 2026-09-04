@@ -35,6 +35,8 @@ export interface OrderRow {
   rzp_order_id?: string | null;
   payment_id?: string | null;
   mandate_id?: number | null;
+  /** Whether the order was initiated/settled autonomously by AI Agent or human User */
+  paid_by?: "agent" | "user" | null;
 }
 
 export interface CustomerRow {

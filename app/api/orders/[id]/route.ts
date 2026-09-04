@@ -27,11 +27,16 @@ export async function GET(_req: Request, { params }: Params) {
     // items_json should always be valid; fall back to empty array.
   }
 
+  const paidBy = order.paid_by ?? (order.mandate_id ? "agent" : "user");
+
   return NextResponse.json({
     id: order.id,
     status: order.status,
     amountPaise: order.amount_paise,
     items,
     createdAt: order.created_at,
+    paidBy,
+    paymentId: order.payment_id ?? null,
+    mandateId: order.mandate_id ?? null,
   });
 }
