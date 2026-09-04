@@ -25,9 +25,9 @@ const STATUS_LABEL: Record<OrderData["status"], string> = {
 };
 
 const STATUS_STYLE: Record<OrderData["status"], string> = {
-  created: "border-amber-800 bg-amber-950/40 text-amber-300",
-  paid: "border-emerald-800 bg-emerald-950/40 text-emerald-300",
-  failed: "border-red-800 bg-red-950/40 text-red-300",
+  created: "border-2 border-[#000000] bg-[#FEF08A] text-[#000000] shadow-[2px_2px_0px_#000000]",
+  paid: "border-2 border-[#000000] bg-[#CCFF00] text-[#000000] shadow-[2px_2px_0px_#000000]",
+  failed: "border-2 border-[#000000] bg-[#FF0055] text-[#FFFFFF] shadow-[2px_2px_0px_#000000]",
 };
 
 export default function OrderPage({ params }: { params: { id: string } }) {
@@ -84,19 +84,28 @@ export default function OrderPage({ params }: { params: { id: string } }) {
 
   if (error) {
     return (
-      <main className="mx-auto flex min-h-screen max-w-2xl flex-col items-center justify-center px-4">
-        <p className="text-red-400">{error}</p>
-        <Link href="/" className="mt-4 text-sm text-indigo-400 hover:text-indigo-300">
-          ← Back to store
-        </Link>
+      <main className="mx-auto flex min-h-screen max-w-2xl flex-col items-center justify-center bg-[#F4F4F0] px-4 text-[#000000]">
+        <div className="border-[3px] border-[#000000] bg-[#FFFFFF] p-6 text-center shadow-[5px_5px_0px_#000000]">
+          <p className="font-bold text-[#FF0055]">{error}</p>
+          <Link
+            href="/"
+            className="mt-4 inline-block border-2 border-[#000000] bg-[#CCFF00] px-4 py-2 text-xs font-black uppercase text-[#000000] shadow-[2px_2px_0px_#000000]"
+          >
+            ← Back to store
+          </Link>
+        </div>
       </main>
     );
   }
 
   if (!order) {
     return (
-      <main className="mx-auto flex min-h-screen max-w-2xl items-center justify-center px-4">
-        <p className="text-zinc-400">Loading order #{orderId}…</p>
+      <main className="mx-auto flex min-h-screen max-w-2xl items-center justify-center bg-[#F4F4F0] px-4 text-[#000000]">
+        <div className="border-[3px] border-[#000000] bg-[#FFFFFF] p-6 text-center shadow-[5px_5px_0px_#000000]">
+          <p className="font-black uppercase tracking-tight text-[#000000]">
+            Loading order #{orderId}…
+          </p>
+        </div>
       </main>
     );
   }
@@ -104,64 +113,87 @@ export default function OrderPage({ params }: { params: { id: string } }) {
   const byId = new Map(products.map((p) => [p.id, p]));
 
   return (
-    <main className="mx-auto max-w-2xl px-4 py-12">
-      <Link href="/" className="text-sm text-indigo-400 hover:text-indigo-300">
-        ← Back to store
-      </Link>
+    <main className="min-h-screen bg-[#F4F4F0] px-4 py-12 text-[#000000]">
+      <div className="mx-auto max-w-2xl">
+        <Link
+          href="/"
+          className="inline-flex items-center gap-2 border-[3px] border-[#000000] bg-[#FFFFFF] px-3.5 py-1.5 text-xs font-black uppercase tracking-wider text-[#000000] shadow-[3px_3px_0px_#000000] transition-all hover:-translate-y-[1px] hover:shadow-[4px_5px_0px_#000000] active:translate-y-[1px] active:shadow-none"
+        >
+          ← Back to store
+        </Link>
 
-      <h1 className="mt-6 text-2xl font-bold text-zinc-100">Order #{order.id}</h1>
+        <div className="mt-6 border-[3px] border-[#000000] bg-[#FFFFFF] p-6 shadow-[6px_6px_0px_#000000]">
+          <div className="flex flex-wrap items-center justify-between gap-3 border-b-2 border-[#000000] pb-4">
+            <div>
+              <span className="text-[10px] font-black uppercase tracking-wider text-[#000000]/60">
+                Order Receipt
+              </span>
+              <h1 className="text-2xl font-black uppercase tracking-tight text-[#000000]">
+                Order #{order.id}
+              </h1>
+            </div>
+            <span
+              className={`inline-block px-3 py-1 text-xs font-black uppercase tracking-wider ${STATUS_STYLE[order.status]}`}
+            >
+              {STATUS_LABEL[order.status]}
+            </span>
+          </div>
 
-      <span
-        className={`mt-3 inline-block rounded-full border px-3 py-1 text-sm font-medium ${STATUS_STYLE[order.status]}`}
-      >
-        {STATUS_LABEL[order.status]}
-      </span>
+          {order.status === "paid" && (
+            <div className="mt-4 border-2 border-[#000000] bg-[#CCFF00] p-3 text-xs font-bold text-[#000000]">
+              🎉 Payment captured from your UPI Reserve Pay block — zero PIN required!
+            </div>
+          )}
+          {order.status === "created" && (
+            <div className="mt-4 border-2 border-[#000000] bg-[#FEF08A] p-3 text-xs font-bold text-[#000000]">
+              ⏳ Confirming your payment with Razorpay — this page refreshes automatically.
+            </div>
+          )}
+          {order.status === "failed" && (
+            <div className="mt-4 border-2 border-[#000000] bg-[#FF0055] p-3 text-xs font-bold text-[#FFFFFF]">
+              ⚠️ The debit could not be completed. Please try again.
+            </div>
+          )}
 
-      {order.status === "paid" && (
-        <p className="mt-3 text-sm text-zinc-400">
-          Payment captured from your UPI Reserve Pay block — no PIN needed. 🎉
-        </p>
-      )}
-      {order.status === "created" && (
-        <p className="mt-3 text-sm text-zinc-400">
-          We&apos;re confirming your payment — this page refreshes automatically.
-        </p>
-      )}
-      {order.status === "failed" && (
-        <p className="mt-3 text-sm text-zinc-400">
-          The debit could not be completed. Please try again.
-        </p>
-      )}
+          <section className="mt-6">
+            <h2 className="border-b border-[#000000]/20 pb-1 text-xs font-black uppercase tracking-wider text-[#000000]">
+              Purchased Items
+            </h2>
+            <ul className="mt-3 space-y-2.5">
+              {order.items.map((item) => {
+                const product = byId.get(item.productId);
+                return (
+                  <li
+                    key={item.productId}
+                    className="flex items-center justify-between border-b border-[#000000]/10 pb-2 text-sm"
+                  >
+                    <span className="font-bold text-[#000000]">
+                      {product ? product.name : `Product #${item.productId}`}
+                      <span className="ml-1 text-xs font-normal text-[#000000]/60">
+                        × {item.qty}
+                      </span>
+                    </span>
+                    <span className="font-black text-[#000000]">
+                      {product ? formatPaise(product.price_paise * item.qty) : "—"}
+                    </span>
+                  </li>
+                );
+              })}
+            </ul>
 
-      <section className="mt-8 rounded-xl border border-zinc-800 bg-zinc-900/60 p-5">
-        <h2 className="text-sm font-semibold uppercase tracking-wide text-zinc-400">Items</h2>
-        <ul className="mt-3 space-y-3">
-          {order.items.map((item) => {
-            const product = byId.get(item.productId);
-            return (
-              <li key={item.productId} className="flex items-center justify-between text-sm">
-                <span className="text-zinc-200">
-                  {product ? product.name : `Product #${item.productId}`}
-                  <span className="text-zinc-500"> × {item.qty}</span>
-                </span>
-                <span className="text-zinc-300">
-                  {product ? formatPaise(product.price_paise * item.qty) : "—"}
-                </span>
-              </li>
-            );
-          })}
-        </ul>
-        <div className="mt-4 flex items-center justify-between border-t border-zinc-800 pt-3 text-sm">
-          <span className="text-zinc-400">Total</span>
-          <span className="text-lg font-semibold text-zinc-100">
-            {formatPaise(order.amountPaise)}
-          </span>
+            <div className="mt-5 flex items-center justify-between border-t-2 border-[#000000] pt-4">
+              <span className="text-sm font-black uppercase text-[#000000]">Total Paid</span>
+              <span className="text-2xl font-black text-[#000000]">
+                {formatPaise(order.amountPaise)}
+              </span>
+            </div>
+          </section>
+
+          <p className="mt-6 border-t border-[#000000]/10 pt-3 text-[11px] font-bold text-[#000000]/60">
+            Placed on {new Date(order.createdAt).toLocaleString("en-IN")} · Razorpay UPI Reserve Pay (SBMD)
+          </p>
         </div>
-      </section>
-
-      <p className="mt-6 text-xs text-zinc-500">
-        Placed at {new Date(order.createdAt).toLocaleString("en-IN")} · UPI Reserve Pay
-      </p>
+      </div>
     </main>
   );
 }

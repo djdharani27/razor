@@ -49,19 +49,19 @@ export default function JsonEditor({
         }}
         onBlur={handleBlur}
         rows={rows}
-        className={`w-full resize-y rounded-md border bg-zinc-950 p-2 font-mono text-[12px] leading-relaxed text-zinc-100 focus:outline-none focus:ring-2 focus:ring-amber-400/60 ${
-          readOnly ? "cursor-text border-zinc-800" : "border-zinc-700"
-        } ${error ? "border-red-500" : ""}`}
+        className={`w-full resize-y border-2 border-[#000000] bg-[#000000] p-3 font-mono text-[12px] leading-relaxed text-[#CCFF00] shadow-[2px_2px_0px_#000000] outline-none transition focus:border-[#000000] focus:shadow-[4px_4px_0px_#000000] ${
+          readOnly ? "cursor-text opacity-95" : ""
+        } ${error ? "!border-[#FF0055] !text-[#FF0055]" : ""}`}
       />
-      <div className="flex min-h-[1rem] items-center justify-between text-[11px]">
-        <span className={error ? "text-red-400" : "text-zinc-500"}>
-          {error ?? (valid ? "Valid JSON" : "Edit the JSON above")}
+      <div className="flex min-h-[1.2rem] items-center justify-between text-[11px]">
+        <span className={error ? "font-bold text-[#FF0055]" : "font-medium text-[#000000]/60"}>
+          {error ?? (valid ? "✓ Valid JSON" : "Edit JSON above")}
         </span>
         {!readOnly && (
           <button
             type="button"
             onClick={() => onChange("")}
-            className="rounded px-1.5 py-0.5 text-zinc-500 transition-colors hover:bg-zinc-800 hover:text-zinc-200"
+            className="border border-[#000000] bg-[#FFFFFF] px-2 py-0.5 text-[10px] font-bold text-[#000000] hover:bg-[#F4F4F0]"
           >
             Clear
           </button>

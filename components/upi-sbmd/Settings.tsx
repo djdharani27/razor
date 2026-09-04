@@ -19,41 +19,34 @@ export default function Settings({
   const [confirmingClear, setConfirmingClear] = useState(false);
 
   return (
-    <section className="rounded-lg border border-zinc-800 bg-zinc-900 p-4">
-      <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+    <section className="border-[3px] border-[#000000] bg-[#FFFFFF] p-5 shadow-[5px_5px_0px_#000000]">
+      <div className="mb-4 flex flex-wrap items-center justify-between gap-3 border-b-2 border-[#000000] pb-3">
         <div>
-          <h2 className="font-semibold text-zinc-100">Razorpay API credentials</h2>
-          <p className="text-[12px] text-zinc-500">
-            Keys are read from server-side environment variables (
-            <code className="rounded bg-zinc-800 px-1 py-0.5 text-[11px]">
-              RAZORPAY_KEY_ID
-            </code>{" "}
-            /{" "}
-            <code className="rounded bg-zinc-800 px-1 py-0.5 text-[11px]">
-              RAZORPAY_KEY_SECRET
-            </code>
-            ). Set them in <code className="rounded bg-zinc-800 px-1 py-0.5 text-[11px]">.env.local</code>{" "}
-            and restart the dev server. The secret never reaches this page.
+          <h2 className="text-sm font-black uppercase tracking-wider text-[#000000]">
+            Razorpay API Credentials
+          </h2>
+          <p className="mt-0.5 text-xs font-medium text-[#000000]/70">
+            Keys loaded from server environment (<code className="border border-[#000000] bg-[#F4F4F0] px-1 font-mono font-bold text-[#000000]">RAZORPAY_KEY_ID</code>). The secret never leaves the server.
           </p>
         </div>
-        <div className="flex gap-2">
+        <div className="flex items-center gap-2">
           <button
             type="button"
             onClick={onReload}
-            className="rounded-md border border-zinc-600 px-3 py-1.5 text-xs text-zinc-200 transition-colors hover:border-zinc-400"
+            className="border-2 border-[#000000] bg-[#FFFFFF] px-3 py-1.5 text-xs font-black uppercase text-[#000000] shadow-[2px_2px_0px_#000000] transition hover:-translate-y-[1px] hover:bg-[#F4F4F0] active:translate-y-[1px] active:shadow-none"
           >
-            Reload config
+            Reload Config
           </button>
           {!confirmingClear ? (
             <button
               type="button"
               onClick={() => setConfirmingClear(true)}
-              className="rounded-md border border-red-900/60 px-3 py-1.5 text-xs text-red-400/90 transition-colors hover:border-red-700 hover:text-red-300"
+              className="border-2 border-[#000000] bg-[#FFF0F3] px-3 py-1.5 text-xs font-black uppercase text-[#FF0055] shadow-[2px_2px_0px_#000000] transition hover:-translate-y-[1px] hover:bg-[#FF0055] hover:text-[#FFFFFF] active:translate-y-[1px] active:shadow-none"
             >
-              Clear saved steps
+              Clear Saved Steps
             </button>
           ) : (
-            <span className="flex items-center gap-1 text-[11px] text-zinc-400">
+            <span className="flex items-center gap-1.5 border-2 border-[#000000] bg-[#FFF0F3] px-2 py-1 text-xs font-black text-[#FF0055]">
               Sure?
               <button
                 type="button"
@@ -61,14 +54,14 @@ export default function Settings({
                   onClearAll();
                   setConfirmingClear(false);
                 }}
-                className="rounded bg-red-900/60 px-2 py-0.5 text-red-200 hover:bg-red-800"
+                className="border border-[#000000] bg-[#FF0055] px-2 py-0.5 text-[10px] text-[#FFFFFF]"
               >
                 Yes
               </button>
               <button
                 type="button"
                 onClick={() => setConfirmingClear(false)}
-                className="rounded px-2 py-0.5 text-zinc-400 hover:text-zinc-200"
+                className="border border-[#000000] bg-[#FFFFFF] px-2 py-0.5 text-[10px] text-[#000000]"
               >
                 No
               </button>
@@ -77,30 +70,32 @@ export default function Settings({
         </div>
       </div>
 
-      <div className="grid gap-3 sm:grid-cols-2">
-        <div className="flex flex-col gap-1">
-          <span className="text-[11px] font-medium uppercase tracking-wider text-zinc-500">
+      <div className="grid gap-4 sm:grid-cols-2">
+        <div className="border-2 border-[#000000] bg-[#F4F4F0] p-3 shadow-[2px_2px_0px_#000000]">
+          <span className="text-[10px] font-black uppercase tracking-wider text-[#000000]/60">
             Status
           </span>
-          {configured ? (
-            <span className="inline-flex items-center gap-2 text-sm text-emerald-400">
-              <span className="h-2 w-2 rounded-full bg-emerald-400" />
-              Configured — runs are enabled
-            </span>
-          ) : (
-            <span className="inline-flex items-center gap-2 text-sm text-amber-300">
-              <span className="h-2 w-2 rounded-full bg-amber-400" />
-              Not configured — set the env vars to enable runs
-            </span>
-          )}
+          <div className="mt-1">
+            {configured ? (
+              <span className="inline-flex items-center gap-2 border border-[#000000] bg-[#CCFF00] px-2 py-0.5 text-xs font-black text-[#000000]">
+                <span className="h-2 w-2 bg-[#000000]" />
+                Configured — Runs Enabled
+              </span>
+            ) : (
+              <span className="inline-flex items-center gap-2 border border-[#000000] bg-[#FEF08A] px-2 py-0.5 text-xs font-black text-[#000000]">
+                <span className="h-2 w-2 bg-[#000000]" />
+                Not Configured (Missing Keys)
+              </span>
+            )}
+          </div>
         </div>
-        <div className="flex flex-col gap-1">
-          <span className="text-[11px] font-medium uppercase tracking-wider text-zinc-500">
-            Key ID (from server env)
+        <div className="border-2 border-[#000000] bg-[#F4F4F0] p-3 shadow-[2px_2px_0px_#000000]">
+          <span className="text-[10px] font-black uppercase tracking-wider text-[#000000]/60">
+            Key ID (Public)
           </span>
-          <span className="font-mono text-sm text-zinc-100">
+          <p className="mt-1 font-mono text-xs font-black text-[#000000]">
             {keyId ? maskKeyId(keyId) : "(none)"}
-          </span>
+          </p>
         </div>
       </div>
     </section>

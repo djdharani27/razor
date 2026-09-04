@@ -859,95 +859,103 @@ export default function Home() {
   }
 
   return (
-    <main className="mx-auto flex w-full max-w-5xl flex-col gap-4 px-4 py-8">
-      <div className="flex items-center justify-between gap-3">
-        <a
-          href="/"
-          className="text-[13px] text-zinc-400 transition-colors hover:text-zinc-100"
-        >
-          ← Back to AgentStore
-        </a>
+    <main className="min-h-screen bg-[#F4F4F0] px-4 py-8 text-[#000000]">
+      <div className="mx-auto flex w-full max-w-5xl flex-col gap-6">
+        <div className="flex items-center justify-between gap-3 border-b-2 border-[#000000] pb-3">
+          <a
+            href="/"
+            className="inline-flex items-center gap-1.5 border-2 border-[#000000] bg-[#FFFFFF] px-3 py-1 text-xs font-black uppercase text-[#000000] shadow-[2px_2px_0px_#000000] transition hover:-translate-y-[1px] hover:shadow-[3px_3px_0px_#000000] active:translate-y-[1px]"
+          >
+            ← Back to Store
+          </a>
+          <a
+            href="/agent"
+            className="inline-flex items-center gap-1.5 border-2 border-[#000000] bg-[#CCFF00] px-3 py-1 text-xs font-black uppercase text-[#000000] shadow-[2px_2px_0px_#000000] transition hover:-translate-y-[1px] hover:shadow-[3px_3px_0px_#000000] active:translate-y-[1px]"
+          >
+            💬 Chat with Agent
+          </a>
+        </div>
+
+        <header className="border-[3px] border-[#000000] bg-[#FFFFFF] p-5 shadow-[5px_5px_0px_#000000]">
+          <div className="flex items-center gap-2">
+            <span className="border-2 border-[#000000] bg-[#CCFF00] px-2 py-0.5 text-[10px] font-black uppercase text-[#000000]">
+              Developer Sandbox
+            </span>
+            <span className="text-xs font-bold text-[#000000]/60">
+              Interactive Protocol Harness
+            </span>
+          </div>
+          <h1 className="mt-2 text-2xl font-black uppercase tracking-tight text-[#000000]">
+            Razorpay UPI Reserve Pay — SBMD Sandbox
+          </h1>
+          <p className="mt-1 text-xs font-medium leading-relaxed text-[#000000]/80">
+            UPI Reserve Pay (Single Block Multiple Debit) end to end: Group 1 registers the mandate
+            (1.1 customer → 1.2 authorisation order → 1.3 Razorpay Checkout), Group 2 fetches the token
+            (2.1 payment → token_id), Group 3 charges the customer (3.1 charge order → 3.2 one-time payment).
+            Real API requests & responses run sequentially with auto-wiring.
+          </p>
+        </header>
+
+        {!apiReady && (
+          <div className="border-2 border-[#000000] bg-[#FEF08A] p-4 text-xs font-bold text-[#000000] shadow-[3px_3px_0px_#000000]">
+            <span className="font-black uppercase">⚠️ API Keys Required: </span>
+            Run buttons are disabled until your Razorpay Key ID and Key Secret are set in the server environment (.env.local).
+          </div>
+        )}
+
+        <Settings
+          keyId={state.keyId}
+          configured={configured}
+          onReload={reloadEnvConfig}
+          onClearAll={clearAll}
+        />
+
+        {!serverReady && (
+          <div className="border-2 border-[#000000] bg-[#FFF0F3] p-3 text-xs font-bold text-[#FF0055]">
+            Server-side step storage is unavailable — step inputs and outputs will only persist in this browser.
+          </div>
+        )}
+
+        <div className="flex flex-col gap-5">
+          {STEPS.map((step, i) => {
+            const expiryAdjusted =
+              step.id === "createOrder" &&
+              !!state.inputs.createOrder &&
+              orderExpiryIsStale(state.inputs.createOrder);
+            return (
+              <StepCard
+                key={step.id}
+                step={step}
+                index={i}
+                endpoint={displayEndpoint(step.id)}
+                input={inputOf(step.id)}
+                output={outputOf(step.id)}
+                lastResult={lastResult[step.id] ?? null}
+                running={running === step.id}
+                apiReady={apiReady}
+                canUseAsInput={step.id === "createCustomer" && !!state.outputs[step.id]}
+                checkout={isCheckout(step.id)}
+                expiryAdjusted={expiryAdjusted}
+                onInputChange={(v) => mergeInput(step.id, v)}
+                onOutputChange={(v) => mergeOutput(step.id, v)}
+                onRun={() => runStep(step.id)}
+                onUseAsInput={() => applyResultAsInput(step.id)}
+                onSaveOutput={() => saveOutputAsDefault(step.id)}
+              />
+            );
+          })}
+        </div>
+
+        <History
+          results={history}
+          onLoad={loadHistoryEntry}
+          onDelete={deleteHistoryEntry}
+          onClear={() => {
+            setHistory([]);
+            localStorage.removeItem(AUTO_KEY);
+          }}
+        />
       </div>
-      <header className="flex flex-col gap-1">
-        <h1 className="text-2xl font-bold text-zinc-50">
-          Razorpay UPI Reserve Pay — SBMD
-        </h1>
-        <p className="text-[13px] text-zinc-400">
-          UPI Reserve Pay (SBMD) end to end: Group 1 registers the mandate
-          (1.1 customer → 1.2 authorisation order → 1.3 Razorpay Checkout),
-          Group 2 fetches the token (2.1 payment → token_id), Group 3 charges
-          the customer (3.1 charge order → 3.2 one-time payment). Steps run
-          front-to-back; the ids each step needs (customer_id, order_id,
-          token_id, email/contact) are auto-filled from the previous step&apos;s
-          real Razorpay response — a step will not run until those exist. Paste
-          a real id into a step&apos;s JSON only to resume a flow after a reload.
-          Every input and output is editable, and each run is kept in History
-          below.
-        </p>
-      </header>
-
-      {!apiReady && (
-        <p className="rounded-lg border border-amber-400/40 bg-amber-400/10 px-4 py-3 text-sm text-amber-100">
-          <span className="font-semibold">Run buttons are disabled until your
-          Razorpay Key ID and Key Secret are set in the server environment
-          (.env.local).</span>{" "}
-          Steps are never blocked in sequence — you can start from any step.
-        </p>
-      )}
-
-      <Settings
-        keyId={state.keyId}
-        configured={configured}
-        onReload={reloadEnvConfig}
-        onClearAll={clearAll}
-      />
-
-      {!serverReady && (
-        <p className="rounded-md border border-amber-400/20 bg-amber-400/5 px-3 py-2 text-[12px] text-amber-200/90">
-          Server-side step storage is unavailable — step inputs and outputs will
-          only persist in this browser.
-        </p>
-      )}
-
-      <div className="flex flex-col gap-4">
-        {STEPS.map((step, i) => {
-          const expiryAdjusted =
-            step.id === "createOrder" &&
-            !!state.inputs.createOrder &&
-            orderExpiryIsStale(state.inputs.createOrder);
-          return (
-            <StepCard
-              key={step.id}
-              step={step}
-              index={i}
-              endpoint={displayEndpoint(step.id)}
-              input={inputOf(step.id)}
-              output={outputOf(step.id)}
-              lastResult={lastResult[step.id] ?? null}
-              running={running === step.id}
-              apiReady={apiReady}
-              canUseAsInput={step.id === "createCustomer" && !!state.outputs[step.id]}
-              checkout={isCheckout(step.id)}
-              expiryAdjusted={expiryAdjusted}
-              onInputChange={(v) => mergeInput(step.id, v)}
-              onOutputChange={(v) => mergeOutput(step.id, v)}
-              onRun={() => runStep(step.id)}
-              onUseAsInput={() => applyResultAsInput(step.id)}
-              onSaveOutput={() => saveOutputAsDefault(step.id)}
-            />
-          );
-        })}
-      </div>
-
-      <History
-        results={history}
-        onLoad={loadHistoryEntry}
-        onDelete={deleteHistoryEntry}
-        onClear={() => {
-          setHistory([]);
-          localStorage.removeItem(AUTO_KEY);
-        }}
-      />
     </main>
   );
 }

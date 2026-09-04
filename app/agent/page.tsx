@@ -28,6 +28,28 @@ interface DisplayMessage {
 
 const inr = new Intl.NumberFormat("en-IN", { style: "currency", currency: "INR" });
 
+const MCP_CONFIG = JSON.stringify(
+  {
+    mcpServers: {
+      "chrome-devtools": {
+        transport: "stdio",
+        enabled: true,
+        command: "npx",
+        args: [
+          "-y",
+          "chrome-devtools-mcp@latest",
+          "--categoryExperimentalWebmcp=true",
+          "--chromeArg=--enable-features=WebMCP",
+          "--chromeArg=--headless=new",
+          "--no-usage-statistics",
+        ],
+      },
+    },
+  },
+  null,
+  2
+);
+
 export default function AgentPage() {
   const [messages, setMessages] = useState<DisplayMessage[]>([]);
   const [loading, setLoading] = useState(false);
@@ -36,6 +58,8 @@ export default function AgentPage() {
   const [showProfileForm, setShowProfileForm] = useState(false);
   const [agentCode, setAgentCode] = useState<string | null>(null);
   const [copiedCode, setCopiedCode] = useState(false);
+  const [mcpModalOpen, setMcpModalOpen] = useState(false);
+  const [copiedMcp, setCopiedMcp] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
   const { customer, refresh } = useSavedCustomer();
   // The customer profile collected in this chat session (via remember_customer),
@@ -288,12 +312,82 @@ export default function AgentPage() {
               + Add my details
             </button>
           )}
+          <button
+            type="button"
+            onClick={() => setMcpModalOpen(true)}
+            className="flex items-center gap-1.5 border-2 border-[#000000] bg-[#FFFFFF] px-2.5 py-1 text-xs font-black uppercase tracking-wider text-[#000000] shadow-[2px_2px_0px_#000000] transition-all hover:-translate-y-[1px] hover:bg-[#CCFF00] hover:shadow-[3px_3px_0px_#000000] active:translate-y-[1px] active:shadow-none"
+            title="View copyable WebMCP config for autonomous agents"
+          >
+            <span>🤖 MCP Config</span>
+          </button>
           <span className="inline-flex items-center gap-1.5 border-2 border-[#000000] bg-[#000000] px-3 py-1 text-xs font-bold text-[#F4F4F0] shadow-[3px_3px_0px_#000000]">
             <span className="h-2 w-2 animate-pulse bg-[#CCFF00]" />
             Agent Online
           </span>
         </div>
       </header>
+
+      {/* WebMCP Config Modal */}
+      {mcpModalOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4">
+          <div className="w-full max-w-xl border-[4px] border-[#000000] bg-[#FFFFFF] p-6 shadow-[8px_8px_0px_#000000] animate-pop-in">
+            <div className="flex items-start justify-between border-b-2 border-[#000000] pb-3">
+              <div className="flex items-center gap-2">
+                <span className="text-2xl">🤖</span>
+                <div>
+                  <h3 className="text-lg font-black uppercase tracking-tight text-[#000000]">
+                    WebMCP Agent Configuration
+                  </h3>
+                  <p className="text-xs font-medium text-[#000000]/70">
+                    Add this to your Claude Desktop / Cursor / DevTools MCP config:
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setMcpModalOpen(false)}
+                className="border-2 border-[#000000] bg-[#FF0055] px-2 py-0.5 text-xs font-black text-[#FFFFFF] shadow-[2px_2px_0px_#000000] transition hover:translate-x-[1px] hover:translate-y-[1px] hover:shadow-none"
+              >
+                ✕
+              </button>
+            </div>
+
+            <div className="mt-4">
+              <div className="relative">
+                <pre className="max-h-64 overflow-x-auto border-2 border-[#000000] bg-[#000000] p-4 font-mono text-xs text-[#CCFF00]">
+                  {MCP_CONFIG}
+                </pre>
+              </div>
+
+              <div className="mt-4 flex flex-wrap items-center justify-between gap-3">
+                <p className="text-[11px] font-bold text-[#000000]/60">
+                  Enables autonomous browsing & instant UPI Reserve Pay debits.
+                </p>
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      navigator.clipboard.writeText(MCP_CONFIG);
+                      setCopiedMcp(true);
+                      setTimeout(() => setCopiedMcp(false), 2000);
+                    }}
+                    className="border-[3px] border-[#000000] bg-[#CCFF00] px-4 py-2 text-xs font-black uppercase tracking-wider text-[#000000] shadow-[3px_3px_0px_#000000] transition hover:-translate-y-[1px] hover:shadow-[4px_5px_0px_#000000] active:translate-y-[1px] active:shadow-none"
+                  >
+                    {copiedMcp ? "✓ Copied to Clipboard!" : "Copy MCP Config"}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setMcpModalOpen(false)}
+                    className="border-2 border-[#000000] bg-[#FFFFFF] px-3 py-2 text-xs font-black uppercase text-[#000000] hover:bg-[#F4F4F0]"
+                  >
+                    Close
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Messages area */}
       <div ref={scrollRef} className="flex-1 overflow-y-auto px-4 py-6">

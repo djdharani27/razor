@@ -81,24 +81,24 @@ export default function CartDrawer({
 
       {/* Panel */}
       <aside
-        className={`absolute right-0 top-0 flex h-full w-full max-w-md flex-col border-l border-zinc-800 bg-zinc-900 shadow-2xl transition-transform duration-300 ${
+        className={`absolute right-0 top-0 flex h-full w-full max-w-md flex-col border-l-4 border-[#000000] bg-[#F4F4F0] shadow-[-8px_0px_0px_rgba(0,0,0,0.2)] transition-transform duration-300 ${
           open ? "translate-x-0" : "translate-x-full"
         }`}
         role="dialog"
         aria-modal="true"
         aria-label="Shopping cart"
       >
-        <header className="flex items-center justify-between border-b border-zinc-800 px-5 py-4">
-          <h2 className="text-lg font-semibold text-zinc-100">
+        <header className="flex items-center justify-between border-b-4 border-[#000000] bg-[#FFFFFF] px-5 py-4">
+          <h2 className="text-base font-black uppercase tracking-tight text-[#000000]">
             Your Cart{" "}
-            <span className="text-sm font-normal text-zinc-400">
-              ({totalQty} item{totalQty === 1 ? "" : "s"})
+            <span className="ml-1 border-2 border-[#000000] bg-[#CCFF00] px-1.5 py-0.5 text-xs font-black text-[#000000]">
+              {totalQty} item{totalQty === 1 ? "" : "s"}
             </span>
           </h2>
           <button
             type="button"
             onClick={onClose}
-            className="rounded-md px-2 py-1 text-zinc-400 transition hover:bg-zinc-800 hover:text-zinc-100"
+            className="flex h-8 w-8 items-center justify-center border-2 border-[#000000] bg-[#FF0055] font-black text-xs text-[#FFFFFF] shadow-[2px_2px_0px_#000000] transition hover:translate-x-[1px] hover:translate-y-[1px] hover:shadow-none"
           >
             ✕
           </button>
@@ -106,38 +106,51 @@ export default function CartDrawer({
 
         <div className="flex-1 overflow-y-auto px-5 py-4">
           {items.length === 0 ? (
-            <p className="mt-8 text-center text-sm text-zinc-500">
-              Your cart is empty. Ask the agent to add something, or browse below.
-            </p>
+            <div className="mt-8 border-[3px] border-dashed border-[#000000]/40 bg-[#FFFFFF] p-6 text-center">
+              <span className="text-3xl">🛒</span>
+              <p className="mt-2 text-sm font-black uppercase text-[#000000]">
+                Your cart is empty
+              </p>
+              <p className="mt-1 text-xs font-medium text-[#000000]/60">
+                Ask the AI agent in /agent or add items from the catalog.
+              </p>
+            </div>
           ) : (
             <>
-              <ul className="space-y-4">
+              <ul className="space-y-3">
                 {items.map((item) => {
                   const product = byId.get(item.productId);
                   if (!product) return null;
                   return (
-                    <li key={item.productId} className="flex items-center gap-4">
+                    <li
+                      key={item.productId}
+                      className="flex items-center gap-3 border-[3px] border-[#000000] bg-[#FFFFFF] p-3 shadow-[3px_3px_0px_#000000]"
+                    >
                       <img
                         src={product.image_url}
                         alt={product.name}
-                        className="h-14 w-14 rounded-lg object-cover"
+                        className="h-14 w-14 border-2 border-[#000000] object-cover"
                       />
                       <div className="min-w-0 flex-1">
-                        <p className="truncate text-sm font-medium text-zinc-100">{product.name}</p>
-                        <p className="text-xs text-zinc-400">
+                        <p className="truncate text-sm font-black uppercase text-[#000000]">
+                          {product.name}
+                        </p>
+                        <p className="text-xs font-bold text-[#000000]/60">
                           {formatPaise(product.price_paise)} × {item.qty}
                         </p>
                       </div>
-                      <p className="text-sm font-semibold text-zinc-100">
-                        {formatPaise(product.price_paise * item.qty)}
-                      </p>
-                      <button
-                        type="button"
-                        onClick={() => remove(item.productId)}
-                        className="rounded-md px-2 py-1 text-xs text-zinc-400 transition hover:bg-zinc-800 hover:text-red-400"
-                      >
-                        Remove
-                      </button>
+                      <div className="text-right">
+                        <p className="text-sm font-black text-[#000000]">
+                          {formatPaise(product.price_paise * item.qty)}
+                        </p>
+                        <button
+                          type="button"
+                          onClick={() => remove(item.productId)}
+                          className="mt-1 border border-[#000000] bg-[#FFF0F3] px-1.5 py-0.5 text-[10px] font-black uppercase text-[#FF0055] hover:bg-[#FF0055] hover:text-[#FFFFFF]"
+                        >
+                          Remove
+                        </button>
+                      </div>
                     </li>
                   );
                 })}
@@ -145,7 +158,7 @@ export default function CartDrawer({
 
               {/* First-checkout profile step */}
               {needsProfile && (
-                <div className="mt-5 border-t border-zinc-800 pt-4">
+                <div className="mt-5 border-t-2 border-[#000000] pt-4">
                   <CustomerProfileForm
                     compact
                     onSave={onProfileSave}
@@ -155,12 +168,13 @@ export default function CartDrawer({
 
               {/* Authorisation step */}
               {needsAuthorisation && authRef && (
-                <div className="mt-5 border-t border-zinc-800 pt-4">
-                  <div className="mb-3 rounded-lg border border-indigo-900/60 bg-indigo-950/30 px-3 py-2">
-                    <p className="text-xs text-zinc-300">
-                      <span className="font-medium text-indigo-300">One more step:</span> approve a
-                      UPI block so your future payments don&apos;t need a PIN. This takes a few
-                      seconds in your UPI app.
+                <div className="mt-5 border-t-2 border-[#000000] pt-4">
+                  <div className="mb-3 border-2 border-[#000000] bg-[#CCFF00] p-3 shadow-[2px_2px_0px_#000000]">
+                    <p className="text-xs font-black uppercase text-[#000000]">
+                      ⚡ One-Time Mandate Required:
+                    </p>
+                    <p className="mt-0.5 text-[11px] font-medium text-[#000000]/80">
+                      Approve a ₹1 UPI block in Razorpay Checkout so future debits happen without entering a PIN.
                     </p>
                   </div>
                   <AuthoriseButton
@@ -177,28 +191,30 @@ export default function CartDrawer({
           )}
         </div>
 
-        <footer className="border-t border-zinc-800 px-5 py-4">
-          <div className="mb-3 flex items-center justify-between text-sm">
-            <span className="text-zinc-400">Total</span>
-            <span className="text-lg font-semibold text-zinc-100">{formatPaise(totalPaise)}</span>
+        <footer className="border-t-4 border-[#000000] bg-[#FFFFFF] px-5 py-4">
+          <div className="mb-3 flex items-center justify-between">
+            <span className="text-xs font-black uppercase tracking-wider text-[#000000]/70">
+              Total Due
+            </span>
+            <span className="text-2xl font-black text-[#000000]">{formatPaise(totalPaise)}</span>
           </div>
 
           {checkoutError && (
-            <p className="mb-3 rounded-md border border-red-900/60 bg-red-950/50 px-3 py-2 text-xs text-red-300">
+            <div className="mb-3 border-2 border-[#FF0055] bg-[#FFF0F3] p-2.5 text-xs font-bold text-[#FF0055]">
               {checkoutError}
-            </p>
+            </div>
           )}
 
           <button
             type="button"
             disabled={items.length === 0 || checkoutState === "loading" || needsAuthorisation}
             onClick={onCheckout}
-            className="w-full rounded-lg bg-indigo-600 px-4 py-3 text-sm font-semibold text-white transition hover:bg-indigo-500 disabled:cursor-not-allowed disabled:opacity-50"
+            className="w-full border-[3px] border-[#000000] bg-[#CCFF00] px-4 py-3 text-sm font-black uppercase tracking-wider text-[#000000] shadow-[4px_4px_0px_#000000] transition-all hover:-translate-y-[1px] hover:shadow-[4px_6px_0px_#000000] active:translate-y-[2px] active:shadow-none disabled:cursor-not-allowed disabled:opacity-50"
           >
             {btnLabel}
           </button>
-          <p className="mt-2 text-center text-[11px] text-zinc-500">
-            Test mode — approve with the sandbox UPI app / test UPI ID.
+          <p className="mt-2 text-center text-[11px] font-bold text-[#000000]/60">
+            Powered by Razorpay UPI Reserve Pay (SBMD)
           </p>
         </footer>
       </aside>

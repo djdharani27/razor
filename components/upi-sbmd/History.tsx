@@ -21,19 +21,19 @@ export default function History({ results, onLoad, onDelete, onClear }: HistoryP
   const count = filtered.length;
 
   return (
-    <section className="rounded-lg border border-zinc-800 bg-zinc-900 p-4">
-      <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
-        <h2 className="font-semibold text-zinc-100">
-          History{" "}
-          <span className="text-sm font-normal text-zinc-500">
-            ({results.length} total)
+    <section className="border-[3px] border-[#000000] bg-[#FFFFFF] p-5 shadow-[5px_5px_0px_#000000]">
+      <div className="mb-4 flex flex-wrap items-center justify-between gap-3 border-b-2 border-[#000000] pb-3">
+        <h2 className="text-sm font-black uppercase tracking-wider text-[#000000]">
+          Execution History{" "}
+          <span className="ml-1 border border-[#000000] bg-[#CCFF00] px-1.5 py-0.5 text-xs font-black text-[#000000]">
+            {results.length} total
           </span>
         </h2>
         <div className="flex items-center gap-2">
           <select
             value={filter}
             onChange={(e) => setFilter(e.target.value)}
-            className="rounded-md border border-zinc-700 bg-zinc-950 px-2 py-1 text-xs text-zinc-300 focus:outline-none"
+            className="border-2 border-[#000000] bg-[#FFFFFF] px-2.5 py-1 text-xs font-black text-[#000000] focus:outline-none"
           >
             <option value="all">All steps</option>
             {STEPS.map((s) => (
@@ -44,7 +44,7 @@ export default function History({ results, onLoad, onDelete, onClear }: HistoryP
           </select>
           {count > 0 &&
             (showConfirm ? (
-              <span className="flex items-center gap-1 text-[11px] text-zinc-400">
+              <span className="flex items-center gap-1.5 border-2 border-[#000000] bg-[#FFF0F3] px-2 py-1 text-xs font-black text-[#FF0055]">
                 Clear {count}?
                 <button
                   type="button"
@@ -52,14 +52,14 @@ export default function History({ results, onLoad, onDelete, onClear }: HistoryP
                     onClear();
                     setShowConfirm(false);
                   }}
-                  className="rounded bg-red-900/60 px-2 py-0.5 text-red-200 hover:bg-red-800"
+                  className="border border-[#000000] bg-[#FF0055] px-2 py-0.5 text-[10px] text-[#FFFFFF]"
                 >
                   Yes
                 </button>
                 <button
                   type="button"
                   onClick={() => setShowConfirm(false)}
-                  className="rounded px-2 py-0.5 text-zinc-400 hover:text-zinc-200"
+                  className="border border-[#000000] bg-[#FFFFFF] px-2 py-0.5 text-[10px] text-[#000000]"
                 >
                   No
                 </button>
@@ -68,7 +68,7 @@ export default function History({ results, onLoad, onDelete, onClear }: HistoryP
               <button
                 type="button"
                 onClick={() => setShowConfirm(true)}
-                className="rounded-md border border-red-900/60 px-2.5 py-1 text-xs text-red-400/90 transition-colors hover:border-red-700 hover:text-red-300"
+                className="border-2 border-[#000000] bg-[#FFF0F3] px-2.5 py-1 text-xs font-black uppercase text-[#FF0055] shadow-[2px_2px_0px_#000000] transition hover:-translate-y-[1px] hover:bg-[#FF0055] hover:text-[#FFFFFF] active:translate-y-[1px] active:shadow-none"
               >
                 Clear
               </button>
@@ -77,54 +77,53 @@ export default function History({ results, onLoad, onDelete, onClear }: HistoryP
       </div>
 
       {count === 0 ? (
-        <p className="rounded-md border border-dashed border-zinc-800 px-3 py-6 text-center text-[12px] text-zinc-500">
-          No history yet. Click “Run” on a step above to capture its request and
-          response here, or press “Save” on any step to pin it.
-        </p>
+        <div className="border-2 border-dashed border-[#000000]/30 bg-[#F4F4F0] p-6 text-center text-xs font-bold text-[#000000]/60">
+          No history captured yet. Click “Run” on any step above to record its request & response here.
+        </div>
       ) : (
-        <ul className="flex flex-col gap-2">
+        <ul className="flex flex-col gap-2.5">
           {filtered.map((r) => (
             <li
               key={`${r.stepId}-${r.at}-${r.endpoint}`}
-              className="group flex items-center gap-3 rounded-md border border-zinc-800 bg-zinc-950/60 px-3 py-2"
+              className="flex items-center gap-3 border-2 border-[#000000] bg-[#FFFFFF] p-3 shadow-[2px_2px_0px_#000000]"
             >
               <span
-                className={`w-2 h-2 shrink-0 rounded-full ${
-                  r.ok ? "bg-emerald-400" : "bg-red-400"
+                className={`h-3 w-3 shrink-0 border border-[#000000] ${
+                  r.ok ? "bg-[#CCFF00]" : "bg-[#FF0055]"
                 }`}
                 title={r.ok ? "Success" : "Error"}
               />
               <div className="min-w-0 flex-1">
                 <div className="flex flex-wrap items-center gap-2">
-                  <span className="truncate text-[13px] font-medium text-zinc-200">
+                  <span className="truncate text-xs font-black uppercase text-[#000000]">
                     {r.label}
                   </span>
-                  <span className="font-mono text-[11px] text-zinc-500">
+                  <code className="border border-[#000000]/30 bg-[#F4F4F0] px-1.5 py-0.5 font-mono text-[10px] text-[#000000]/70">
                     {r.method === "JS" ? "Razorpay Checkout" : `${r.method} ${r.endpoint}`}
-                  </span>
+                  </code>
                   <span
-                    className={`font-mono text-[11px] ${
-                      r.ok ? "text-emerald-400" : "text-red-400"
+                    className={`border border-[#000000] px-1.5 py-0.5 font-mono text-[10px] font-black ${
+                      r.ok ? "bg-[#CCFF00] text-[#000000]" : "bg-[#FF0055] text-[#FFFFFF]"
                     }`}
                   >
                     {r.status}
                   </span>
                 </div>
-                <p className="truncate font-mono text-[11px] text-zinc-500">
+                <p className="mt-0.5 truncate font-mono text-[11px] text-[#000000]/60">
                   {summarizeResponse(r.responseBody)} · {timeAgo(r.at)}
                 </p>
               </div>
               <button
                 type="button"
                 onClick={() => onLoad(r)}
-                className="shrink-0 rounded border border-zinc-700 px-2.5 py-1 text-[11px] text-zinc-300 transition-colors hover:border-amber-400/60 hover:text-amber-300"
+                className="shrink-0 border-2 border-[#000000] bg-[#FFFFFF] px-2.5 py-1 text-xs font-black uppercase text-[#000000] shadow-[1px_1px_0px_#000000] transition hover:bg-[#CCFF00]"
               >
                 Load
               </button>
               <button
                 type="button"
                 onClick={() => onDelete(r)}
-                className="shrink-0 rounded border border-transparent px-1.5 py-1 text-[11px] text-zinc-600 transition-colors hover:border-red-900/60 hover:text-red-300"
+                className="shrink-0 border border-[#000000] bg-[#FFF0F3] px-2 py-1 text-xs font-bold text-[#FF0055] hover:bg-[#FF0055] hover:text-[#FFFFFF]"
                 title="Delete"
               >
                 ✕

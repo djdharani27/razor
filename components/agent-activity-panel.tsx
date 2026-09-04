@@ -56,47 +56,55 @@ export default function AgentActivityPanel({ open, onToggle }: AgentActivityPane
   }, []);
 
   return (
-    <section className="rounded-xl border border-zinc-800 bg-zinc-900/60">
+    <section className="border-[3px] border-[#000000] bg-[#FFFFFF] shadow-[5px_5px_0px_#000000]">
       <button
         type="button"
         onClick={onToggle}
-        className="flex w-full items-center justify-between px-4 py-3 text-left"
+        className="flex w-full items-center justify-between bg-[#FFFFFF] px-4 py-3 text-left transition hover:bg-[#F4F4F0]"
         aria-expanded={open}
       >
-        <h2 className="text-sm font-semibold uppercase tracking-wide text-zinc-300">
-          🤖 Agent Activity Log
-        </h2>
-        <span className="text-xs text-zinc-500">
+        <div className="flex items-center gap-2">
+          <span>🤖</span>
+          <h2 className="text-xs font-black uppercase tracking-wider text-[#000000]">
+            Agent Activity Log
+          </h2>
+        </div>
+        <span className="border-2 border-[#000000] bg-[#CCFF00] px-2 py-0.5 text-[10px] font-black text-[#000000]">
           {open ? "Hide" : `Show (${logs.length})`}
         </span>
       </button>
 
       {open && (
-        <div className="border-t border-zinc-800 px-4 py-3">
-          <p className="mb-3 text-xs text-zinc-500">
-            Every WebMCP tool call made by the agent is logged here, in real time.
+        <div className="border-t-[3px] border-[#000000] bg-[#F4F4F0] p-4">
+          <p className="mb-3 text-xs font-medium text-[#000000]/70">
+            Real-time tool calls dispatched by autonomous WebMCP agents:
           </p>
           {logs.length === 0 ? (
-            <p className="text-xs text-zinc-500">
-              No agent activity yet. Ask your agent to &quot;search_products&quot; or
-              &quot;view_cart&quot; and watch this panel light up.
-            </p>
+            <div className="border-2 border-dashed border-[#000000]/30 bg-[#FFFFFF] p-4 text-center">
+              <p className="text-xs font-bold text-[#000000]/50">
+                No tool calls yet. Ask your agent to &quot;search_products&quot; or
+                &quot;checkout&quot; to see activity here.
+              </p>
+            </div>
           ) : (
-            <ul className="max-h-72 space-y-2 overflow-y-auto pr-1">
+            <ul className="max-h-72 space-y-2.5 overflow-y-auto pr-1">
               {logs.map((log) => (
-                <li key={log.id} className="rounded-lg bg-zinc-950/60 px-3 py-2">
-                  <div className="flex items-center justify-between gap-2">
-                    <span className="font-mono text-xs font-semibold text-indigo-300">
+                <li
+                  key={log.id}
+                  className="border-2 border-[#000000] bg-[#FFFFFF] p-2.5 shadow-[2px_2px_0px_#000000]"
+                >
+                  <div className="flex items-center justify-between gap-2 border-b border-[#000000]/10 pb-1">
+                    <span className="font-mono text-xs font-black text-[#000000]">
                       {log.tool_name}
                     </span>
-                    <span className="shrink-0 font-mono text-[10px] text-zinc-500">
+                    <span className="font-mono text-[10px] font-bold text-[#000000]/50">
                       {formatTime(log.timestamp)}
                     </span>
                   </div>
-                  <p className="mt-1 truncate font-mono text-[11px] text-zinc-500">
+                  <p className="mt-1 truncate font-mono text-[11px] text-[#000000]/70">
                     {log.arguments_json}
                   </p>
-                  <p className="mt-0.5 break-words font-mono text-[11px] text-zinc-400">
+                  <p className="mt-0.5 break-words font-mono text-[11px] font-bold text-[#000000]">
                     {describeResult(log.result_json)}
                   </p>
                 </li>
