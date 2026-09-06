@@ -54,7 +54,7 @@ flowchart TD
         StoreAPI -->|Step 1.2: Create ₹1 Auth Order| RZP["💳 Razorpay API"]
         User -.->|Step 1.3: One-time UPI PIN Auth| RZP
         RZP -->|Step 1.4: Mandate Token Generated| StoreAPI
-        StoreAPI -->|Step 3.1 & 3.2: Recurring Debit (Zero PIN)| RZP
+        StoreAPI -->|Step 3.1 & 3.2: Zero-PIN Recurring Debit| RZP
         RZP -->|Payment Captured / SBMD| Settlement["✅ Instant Order Settlement"]
     end
 
