@@ -75,7 +75,7 @@ flowchart TD
 Clone the repository and install dependencies:
 ```bash
 git clone https://github.com/djdharani27/razor.git
-cd razor/buildathon
+cd razor
 npm install
 ```
 
